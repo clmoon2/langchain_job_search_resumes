@@ -29,6 +29,7 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 import asyncio
+from dotenv import load_dotenv
 
 # LangChain imports
 from langchain_openai import ChatOpenAI
@@ -53,6 +54,8 @@ import asyncio
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
+
+load_dotenv()
 
 @dataclass
 class Config:
@@ -373,6 +376,105 @@ def generate_file_path(company_name: str, title: str, posted_at: str = None) -> 
     return f"resumes/tex/{filename}"
 
 
+def validate_required_config() -> None:
+    """Fail fast if critical environment configuration is missing."""
+    required = {
+        "OPENAI_API_KEY": config.OPENAI_API_KEY,
+        "APIFY_API_KEY": config.APIFY_API_KEY,
+        "GITHUB_TOKEN": config.GITHUB_TOKEN,
+        "GOOGLE_SERVICE_ACCOUNT_JSON": config.GOOGLE_SERVICE_ACCOUNT_JSON,
+        "GOOGLE_SHEETS_ID": config.GOOGLE_SHEETS_ID,
+        "GOOGLE_DOCS_ID": config.GOOGLE_DOCS_ID,
+        "GOOGLE_SLIDES_ID": config.GOOGLE_SLIDES_ID,
+    }
+    missing = [name for name, value in required.items() if not value]
+    if missing:
+        raise ValueError(f"Missing required configuration values: {', '.join(missing)}")
+    if not config.ANYMAILFINDER_API_KEY:
+        print("⚠️ ANYMAILFINDER_API_KEY not set; decision-maker email lookup may be skipped.")
+
+
+def format_salary_info(salary_info: Any) -> str:
+    """Return a safe, human-readable salary string from varied Apify payloads."""
+    if not salary_info:
+        return "Not specified"
+    
+    # Handle lists or tuples by taking the first usable entry
+    if isinstance(salary_info, (list, tuple)):
+        for entry in salary_info:
+            formatted = format_salary_info(entry)
+            if formatted != "Not specified":
+                return formatted
+        return "Not specified"
+    
+    # Handle dict structures with common fields
+    if isinstance(salary_info, dict):
+        for key in ("displayValue", "value", "label", "text"):
+            if salary_info.get(key):
+                return clean_string(str(salary_info[key]))
+        
+        low = salary_info.get("min") or salary_info.get("from") or salary_info.get("low")
+        high = salary_info.get("max") or salary_info.get("to") or salary_info.get("high")
+        currency = salary_info.get("currency") or salary_info.get("curr")
+        period = salary_info.get("period") or salary_info.get("unit")
+        
+        parts = []
+        if currency:
+            parts.append(str(currency))
+        if low or high:
+            if low and high:
+                parts.append(f"{low}-{high}")
+            elif low:
+                parts.append(str(low))
+            else:
+                parts.append(str(high))
+        if period:
+            parts.append(str(period))
+        
+        if parts:
+            return clean_string(" ".join(parts))
+        return "Not specified"
+    
+    # Fallback for strings or other primitives
+    return clean_string(str(salary_info)) or "Not specified"
+
+
+def validate_latex_output(latex: str) -> bool:
+    """Basic validation to avoid uploading clearly invalid LaTeX."""
+    if not latex:
+        return False
+    if "\\documentclass" not in latex or "\\end{document}" not in latex:
+        return False
+    if len(latex) < 200:  # heuristic guardrail
+        return False
+    return True
+
+
+def wait_for_pdf_ready(pdf_url: str, wait_seconds: int) -> bool:
+    """Poll for PDF availability with shorter intervals instead of one long sleep."""
+    if not pdf_url:
+        return False
+    
+    deadline = time.time() + wait_seconds
+    interval = max(5, min(30, wait_seconds // 6 or 5))
+    
+    while time.time() < deadline:
+        try:
+            head_resp = request_with_retries(
+                "HEAD",
+                pdf_url,
+                timeout=max(config.REQUEST_TIMEOUT_SECONDS, 60),
+                retries=1
+            )
+            if head_resp.status_code < 400:
+                return True
+        except requests.RequestException:
+            pass
+        time.sleep(interval)
+    
+    return False
+
+
 # =============================================================================
 # API CLIENTS
 # =============================================================================
@@ -485,7 +587,7 @@ class GoogleSlidesClient:
         company = job.get('companyName', 'Unknown Company')
         location = job.get('location', 'Not specified')
         posted_at = job.get('postedAt', 'Unknown')
-        salary = job.get('salaryInfo', ['Not specified'])[0] if job.get('salaryInfo') else 'Not specified'
+        salary = format_salary_info(job.get('salaryInfo'))
         job_link = job.get('link', '')
         apply_url = job.get('applyUrl', 'https://people.tamu.edu/~carlunpen/')
         
@@ -786,6 +888,8 @@ class JobApplicationPipeline:
     """Main pipeline orchestrating the entire workflow"""
     
     def __init__(self):
+        validate_required_config()
+        
         # Initialize clients
         self.sheets_client = GoogleSheetsClient()
         self.docs_client = GoogleDocsClient()
@@ -816,7 +920,16 @@ class JobApplicationPipeline:
     def load_resume_template(self) -> None:
         """Load resume template from Google Docs"""
         print("📄 Loading resume template...")
-        self.resume_template = self.docs_client.get_document_content(config.GOOGLE_DOCS_ID)
+        attempts = 3
+        self.resume_template = ""
+        for attempt in range(1, attempts + 1):
+            self.resume_template = self.docs_client.get_document_content(config.GOOGLE_DOCS_ID)
+            if self.resume_template:
+                break
+            print(f"   Attempt {attempt}/{attempts} returned empty template; retrying...")
+            time.sleep(1)
+        if not self.resume_template:
+            raise ValueError("Failed to load resume template from Google Docs; aborting pipeline.")
         print(f"   Template loaded ({len(self.resume_template)} characters)")
     
     def scrape_jobs(self) -> List[Dict]:
@@ -830,11 +943,14 @@ class JobApplicationPipeline:
         """Filter out already-applied jobs"""
         print("🔄 Filtering duplicates...")
         new_jobs = []
+        seen_in_run = set()
         for j in jobs:
             job_key = build_job_key(j)
             j['jobKey'] = job_key
-            if job_key not in self.applied_job_ids:
+            if job_key and job_key not in self.applied_job_ids and job_key not in seen_in_run:
                 new_jobs.append(j)
+                seen_in_run.add(job_key)
+                self.applied_job_ids.add(job_key)
         print(f"   {len(new_jobs)} new jobs after deduplication")
         return new_jobs
     
@@ -875,7 +991,7 @@ class JobApplicationPipeline:
         # 1. Generate resume
         print("   📝 Generating tailored resume...")
         latex = self.resume_generator.generate_resume(job, self.resume_template)
-        if not latex:
+        if not latex or not validate_latex_output(latex):
             print("   ❌ Failed to generate resume")
             return None
         
@@ -895,22 +1011,8 @@ class JobApplicationPipeline:
         
         # 3. Wait for GitHub Actions to compile PDF
         wait_seconds = config.WAIT_FOR_PDF_SECONDS
-        print(f"   ⏳ Waiting for PDF compilation ({wait_seconds}s)...")
-        time.sleep(wait_seconds)
-        
-        # Basic readiness check (best-effort)
-        pdf_ready = False
-        if pdf_url:
-            try:
-                head_resp = request_with_retries(
-                    "HEAD",
-                    pdf_url,
-                    timeout=max(config.REQUEST_TIMEOUT_SECONDS, 60),
-                    retries=1
-                )
-                pdf_ready = head_resp.status_code < 400
-            except requests.RequestException:
-                pdf_ready = False
+        print(f"   ⏳ Checking for PDF readiness (up to {wait_seconds}s)...")
+        pdf_ready = wait_for_pdf_ready(pdf_url, wait_seconds)
         if not pdf_ready:
             print("   ⚠️ PDF not confirmed ready; verify GitHub Actions artifact if needed")
         
