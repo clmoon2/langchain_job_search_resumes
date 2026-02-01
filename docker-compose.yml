@@ -1,0 +1,22 @@
+services:
+  pipeline:
+    build: .
+    env_file: .env
+    volumes:
+      - ./tex:/app/tex
+      - ./resume_helper_fixed.txt:/app/resume_helper_fixed.txt:ro
+    command: python job_automation_langchain.py
+
+  email:
+    build: .
+    env_file: .env
+    command: python email_outreach_flow.py
+
+  dev:
+    build: .
+    env_file: .env
+    volumes:
+      - .:/app
+    command: bash
+    stdin_open: true
+    tty: true

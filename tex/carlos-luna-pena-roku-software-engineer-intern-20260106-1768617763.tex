@@ -1,0 +1,166 @@
+%-------------------------
+% Resume in Latex
+% Author : Jake Gutierrez
+% Based off of: https://github.com/sb2nov/resume
+% License : MIT
+%------------------------
+\documentclass[letterpaper,11pt]{article}
+\usepackage{latexsym}
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
+\usepackage{marvosym}
+\usepackage[usenames,dvipsnames]{color}
+\usepackage{verbatim}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{fancyhdr}
+\usepackage[english]{babel}
+\usepackage{tabularx}
+\input{glyphtounicode}
+
+%----------FONT OPTIONS----------
+% sans-serif
+% \usepackage[sfdefault]{FiraSans}
+% \usepackage[sfdefault]{roboto}
+% \usepackage[sfdefault]{noto-sans}
+% \usepackage[default]{sourcesanspro}
+
+% serif
+% \usepackage{CormorantGaramond}
+% \usepackage{charter}
+
+\pagestyle{fancy}
+\fancyhf{} % clear all header and footer fields
+\fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+
+% Adjust margins
+\addtolength{\oddsidemargin}{-0.5in}
+\addtolength{\evensidemargin}{-0.5in}
+\addtolength{\textwidth}{1in}
+\addtolength{\topmargin}{-.5in}
+\addtolength{\textheight}{1.0in}
+
+\urlstyle{same}
+
+\raggedbottom
+\raggedright
+\setlength{\tabcolsep}{0in}
+
+% Sections formatting
+\titleformat{\section}{\vspace{-4pt}\scshape\raggedright\large}{}{0em}{}[\color{black}\titlerule \vspace{-5pt}]
+
+% Ensure that generate pdf is machine readable/ATS parsable
+\pdfgentounicode=1
+
+%-------------------------
+% Custom commands
+\newcommand{\resumeItem}[1]{
+  \item\small{{#1 \vspace{-2pt}}}
+}
+
+\newcommand{\resumeSubheading}[4]{
+  \vspace{-2pt}\item
+    \begin{tabular*}{0.97\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{#1} & #2 \\
+      \textit{\small#3} & \textit{\small #4} \\
+    \end{tabular*}\vspace{-7pt}
+}
+
+\newcommand{\resumeSubSubheading}[2]{
+    \item
+    \begin{tabular*}{0.97\textwidth}{l@{\extracolsep{\fill}}r}
+      \textit{\small#1} & \textit{\small #2} \\
+    \end{tabular*}\vspace{-7pt}
+}
+
+\newcommand{\resumeProjectHeading}[2]{
+    \item
+    \begin{tabular*}{0.97\textwidth}{l@{\extracolsep{\fill}}r}
+      \small#1 & #2 \\
+    \end{tabular*}\vspace{-7pt}
+}
+
+\newcommand{\resumeSubItem}[1]{\resumeItem{#1}\vspace{-4pt}}
+
+\renewcommand\labelitemii{$\vcenter{\hbox{\tiny$\bullet$}}$}
+
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0.15in, label={}]}
+\newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
+\newcommand{\resumeItemListStart}{\begin{itemize}}
+\newcommand{\resumeItemListEnd}{\end{itemize}\vspace{-5pt}}
+
+\begin{document}
+
+\begin{center}
+    \textbf{\Huge \scshape Carlos Luna-Peña} \\ \vspace{1pt}
+    \small Computer Science @ Texas A\&M University \\ \vspace{1pt}
+    \small carlunpen@tamu.edu $|$
+    \href{https://github.com/clmoon2}{github.com/clmoon2} $|$
+    \href{https://linkedin.com/in/carlunpen}{linkedin.com/in/carlunpen}
+\end{center}
+
+\section{Education}
+  \resumeSubHeadingListStart
+    \resumeSubheading
+      {Texas A\&M University}{College Station, TX}
+      {Bachelor of Science in Computer Science; GPA: 3.8/4.0}{May 2026}
+      \resumeItemListStart
+        \resumeItem{Relevant Coursework: Software Engineering, Algorithms, Operating Systems, AI}
+        \resumeItem{Completed writing-intensive coursework including specifications and retrospectives}
+      \resumeItemListEnd
+  \resumeSubHeadingListEnd
+
+\section{Experience}
+  \resumeSubHeadingListStart
+    \resumeSubheading
+      {AIPHRODITE}{College Station, TX}
+      {Technical Lead \& Full Stack / ML}{Sep. 2024 -- Present}
+      \resumeItemListStart
+        \resumeItem{Architected FastAPI backend serving computer vision embeddings and outfit recommendations for over 500 wardrobe items, reducing query latency by 40\%.}
+        \resumeItem{Developed AI fashion advisor using LangChain and OpenAI embeddings, improving click-through rates by 25\% in prototype testing.}
+        \resumeItem{Led a team of 6 engineers through Agile sprints, achieving a 35\% reduction in rework by implementing code standards and mentoring new members.}
+      \resumeItemListEnd
+    \resumeSubheading
+      {applyeasy.tech}{College Station, TX}
+      {Founder \& Full-Stack Developer}{January 2024 -- Present}
+      \resumeItemListStart
+        \resumeItem{Built an end-to-end job application automation pipeline using n8n, processing over 100 jobs daily and reducing manual application time by 75\%.}
+        \resumeItem{Founded applyeasy.tech, a SaaS platform that automates job applications with AI-powered filtering and personalized LaTeX resume generation.}
+        \resumeItem{Integrated Google Workspace APIs to automate document generation and email sequences, enhancing user experience and delivery reliability.}
+      \resumeItemListEnd
+  \resumeSubHeadingListEnd
+
+\section{Projects}
+  \resumeSubHeadingListStart
+    \resumeProjectHeading
+      {\textbf{carlosOS -- Custom Unix Shell} $|$ \emph{C, Linux, Systems Programming}}{October 2024}
+      \resumeItemListStart
+        \resumeItem{Implemented a minimal x86 bootloader and kernel with custom memory management and process scheduling in C/C++, tested using QEMU.}
+        \resumeItem{Developed a Unix-style shell supporting pipelines, I/O redirection, and background job control, applying concepts from computer systems coursework.}
+      \resumeItemListEnd
+    \resumeProjectHeading
+      {\textbf{Aggie Events} $|$ \emph{TypeScript, Next.js, React, Node.js}}{March 2025}
+      \resumeItemListStart
+        \resumeItem{Built a full-stack event discovery platform with a responsive Next.js frontend and Node.js API, serving campus organizations and students.}
+        \resumeItem{Optimized PostgreSQL schema, reducing p95 query latency by 40\%, ensuring efficient data retrieval and user interactions.}
+      \resumeItemListEnd
+    \resumeProjectHeading
+      {\textbf{ApplyEasy Job Automation Engine} $|$ \emph{n8n, OpenAI API, Google APIs}}{February 2025}
+      \resumeItemListStart
+        \resumeItem{Architected the core automation engine for applyeasy.tech, orchestrating job scraping and LaTeX resume generation using n8n workflow primitives.}
+        \resumeItem{Implemented reliable data pipelines processing over 100 job postings daily, enhancing the efficiency of the application process.}
+      \resumeItemListEnd
+  \resumeSubHeadingListEnd
+
+\section{Technical Skills}
+ \begin{itemize}[leftmargin=0.15in, label={}]
+    \small{\item{
+     \textbf{Languages}{: Python, TypeScript, JavaScript, C/C++, Java, SQL} \\
+             \textbf{Frameworks}{: React, Next.js, FastAPI, Node.js, LangChain} \\
+             \textbf{Databases \& Tools}{: PostgreSQL, Docker, Git, GitHub Actions, Linux}
+    }}
+ \end{itemize}
+
+\end{document}

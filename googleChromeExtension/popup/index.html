@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tailored Resume Autofill</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Header with Status -->
+    <header class="header">
+      <h1>Resume Autofill</h1>
+      <div id="status-indicator" class="status"></div>
+    </header>
+
+    <!-- Authentication Section -->
+    <section id="auth-container" class="auth-container">
+      <!-- Populated by auth-status.js -->
+    </section>
+
+    <!-- Drop Zone (shown when authenticated) -->
+    <section id="drop-zone-container" class="section hidden">
+      <div id="drop-zone" class="drop-zone">
+        <div class="drop-zone__icon">[FILE]</div>
+        <p class="drop-zone__text">Drop your resume here</p>
+        <p class="drop-zone__subtext">PDF format supported</p>
+        <input type="file" id="file-input" accept=".pdf" hidden>
+      </div>
+    </section>
+
+    <!-- Resume Preview (shown after upload) -->
+    <section id="resume-preview" class="resume-preview hidden">
+      <h2>Loaded Resume</h2>
+      <div class="resume-info">
+        <div class="info-row">
+          <span class="label">Name:</span>
+          <span id="preview-name" class="value">-</span>
+        </div>
+        <div class="info-row">
+          <span class="label">Email:</span>
+          <span id="preview-email" class="value">-</span>
+        </div>
+        <div class="info-row">
+          <span class="label">Phone:</span>
+          <span id="preview-phone" class="value">-</span>
+        </div>
+        <div class="info-row">
+          <span class="label">Experience:</span>
+          <span id="preview-experience-count" class="value">0 positions</span>
+        </div>
+        <div class="info-row">
+          <span class="label">Education:</span>
+          <span id="preview-education-count" class="value">0 entries</span>
+        </div>
+      </div>
+      <div class="resume-actions">
+        <button id="sync-resume" class="btn btn--primary">Sync to Cloud</button>
+        <button id="clear-resume" class="btn btn--secondary">Clear</button>
+      </div>
+    </section>
+
+    <!-- User Profile Form -->
+    <section id="user-profile" class="user-profile hidden">
+      <h2>Contact Info</h2>
+      <form id="profile-form">
+        <div class="form-row">
+          <label>
+            First Name
+            <input type="text" id="profile-first-name" required>
+          </label>
+          <label>
+            Last Name
+            <input type="text" id="profile-last-name" required>
+          </label>
+        </div>
+        <label>
+          Email
+          <input type="email" id="profile-email" required>
+        </label>
+        <label>
+          Phone
+          <input type="tel" id="profile-phone" required>
+        </label>
+        <label>
+          Location (City, State)
+          <input type="text" id="profile-location">
+        </label>
+        <label>
+          LinkedIn URL
+          <input type="url" id="profile-linkedin">
+        </label>
+        <label>
+          GitHub URL
+          <input type="url" id="profile-github">
+        </label>
+        <button type="submit" class="btn btn--primary">Save Profile</button>
+      </form>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <p>Visit a job application page to autofill</p>
+    </footer>
+  </div>
+
+  <script src="../vendor/pdf.js/pdf.min.js"></script>
+  <script src="../lib/storage.js"></script>
+  <script src="../lib/pdf-parser.js"></script>
+  <script src="components/auth-status.js"></script>
+  <script src="components/drop-zone.js"></script>
+  <script src="components/resume-preview.js"></script>
+  <script src="components/status-indicator.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

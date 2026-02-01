@@ -1,0 +1,22 @@
+# Credentials
+.env
+service-account.json
+gmail_credentials.json
+gmail_tokens.txt
+*.pem
+*.key
+
+# IDE
+.cursor/
+
+# Python
+*.pyc
+__pycache__
+.venv
+
+# OS artifacts
+nul
+
+# LaTeX debugging artifacts
+tex/failed/
+compilation_failures.csv

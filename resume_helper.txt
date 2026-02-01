@@ -1,0 +1,654 @@
+CONTROL — DO NOT INCLUDE THIS BLOCK IN FINAL RESUME
+
+════════════════════════════════════════════════════════════════════════════════
+ROLE
+════════════════════════════════════════════════════════════════════════════════
+You take the structured "builder" content below and produce a single-page LaTeX resume using Jake Gutierrez's sb2nov template.
+
+════════════════════════════════════════════════════════════════════════════════
+GOAL
+════════════════════════════════════════════════════════════════════════════════
+- Input: Over-complete resume data (education, experience, projects, skills, keywords) + a job description.
+- Output: A SINGLE-PAGE, ATS-optimized LaTeX resume that compiles, using ONLY the sb2nov preamble and macros.
+- The LaTeX you return will be compiled directly. Return ONLY LaTeX (no backticks, no markdown, no comments, no extra text).
+
+════════════════════════════════════════════════════════════════════════════════
+ABSOLUTE RULES (VIOLATIONS CAUSE COMPILATION FAILURE)
+════════════════════════════════════════════════════════════════════════════════
+1. Copy the preamble EXACTLY as provided below (JG-PREAMBLE), with no changes to packages, spacing, or macros.
+2. After the preamble, emit the resume content and end with \end{{document}}.
+3. Do NOT add new packages, macros, environments, colors, or fonts.
+4. Output only valid LaTeX (no markdown, JSON, or prose).
+5. Escape LaTeX-sensitive characters in text content: & → \&, % → \%, _ → \_, # → \#, $ → \$.
+6. NEVER output placeholder values like {{X}}, {{Y}}, {{N}}, {{K}}, [NUMBER], {{PLACEHOLDER}}, or {{PROJECT_NAME}}.
+   - Use the specific metrics provided in the METRICS REFERENCE section.
+   - If a metric is not available, rewrite the bullet without the metric rather than using a placeholder.
+7. Every \resumeItem{{ MUST have a matching closing brace }} before \resumeItemListEnd.
+8. Count your braces — unbalanced braces cause fatal compilation errors.
+9. The FIRST character of your output must be the backslash in \documentclass.
+10. The LAST characters of your output must be \end{{document}}.
+
+════════════════════════════════════════════════════════════════════════════════
+KEYWORD MATCHING PROTOCOL (CRITICAL FOR ATS)
+════════════════════════════════════════════════════════════════════════════════
+Before writing the resume, perform these steps:
+
+STEP 1: EXTRACT KEYWORDS FROM JOB DESCRIPTION
+Identify and list:
+- Required programming languages
+- Required frameworks and libraries
+- Required tools and platforms
+- Required databases
+- Methodologies mentioned (Agile, CI/CD, TDD, etc.)
+- Soft skills emphasized
+- Domain-specific terms (fintech, e-commerce, etc.)
+- Seniority signals (intern, new grad, junior, senior)
+
+STEP 2: MATCH KEYWORDS TO RESUME CONTENT
+- Top 5-7 required technical skills → MUST appear in Technical Skills section, ordered by relevance to THIS job
+- Top 5 required technical skills → MUST also appear in at least one Experience or Project bullet
+- Each Experience entry → should contain 2-3 keywords from job description
+- Each Project entry → should contain 1-2 keywords from job description
+
+STEP 3: USE EXACT TERMINOLOGY
+- If JD says "React.js" → write "React.js" (not just "React")
+- If JD says "CI/CD pipelines" → write "CI/CD pipelines" (not "continuous integration")
+- If JD says "RESTful APIs" → write "RESTful APIs" (not "REST APIs")
+- Mirror the employer's language patterns exactly
+
+STEP 4: KEYWORD PLACEMENT STRATEGY
+- Technical Skills section: List technologies in order of relevance to THIS job (most relevant first)
+- First bullet of each Experience: Front-load with highest-priority keywords
+- Repeat critical keywords 2-3 times across different sections (naturally, not stuffed)
+
+STEP 5: SELECT BULLET VARIATIONS
+- Use the role-specific bullet variations provided in the DATA section
+- Choose bullets that best match the job description's emphasis (backend vs frontend vs ML vs leadership)
+
+════════════════════════════════════════════════════════════════════════════════
+TEMPLATE PREAMBLE (COPY VERBATIM)
+════════════════════════════════════════════════════════════════════════════════
+
+<<< BEGIN JG-PREAMBLE (COPY VERBATIM) >>>
+%-------------------------
+% Resume in Latex
+% Author : Jake Gutierrez
+% Based off of: https://github.com/sb2nov/resume
+% License : MIT
+%------------------------
+\documentclass[letterpaper,11pt]{{article}}
+\usepackage{{latexsym}}
+\usepackage[empty]{{fullpage}}
+\usepackage{{titlesec}}
+\usepackage{{marvosym}}
+\usepackage[usenames,dvipsnames]{{color}}
+\usepackage{{verbatim}}
+\usepackage{{enumitem}}
+\usepackage[hidelinks]{{hyperref}}
+\usepackage{{fancyhdr}}
+\usepackage[english]{{babel}}
+\usepackage{{tabularx}}
+\input{{glyphtounicode}}
+
+%----------FONT OPTIONS----------
+% sans-serif
+% \usepackage[sfdefault]{{FiraSans}}
+% \usepackage[sfdefault]{{roboto}}
+% \usepackage[sfdefault]{{noto-sans}}
+% \usepackage[default]{{sourcesanspro}}
+
+% serif
+% \usepackage{{CormorantGaramond}}
+% \usepackage{{charter}}
+
+\pagestyle{{fancy}}
+\fancyhf{{}} % clear all header and footer fields
+\fancyfoot{{}}
+\renewcommand{{\headrulewidth}}{{0pt}}
+\renewcommand{{\footrulewidth}}{{0pt}}
+
+% Adjust margins
+\addtolength{{\oddsidemargin}}{{-0.5in}}
+\addtolength{{\evensidemargin}}{{-0.5in}}
+\addtolength{{\textwidth}}{{1in}}
+\addtolength{{\topmargin}}{{-.5in}}
+\addtolength{{\textheight}}{{1.0in}}
+
+\urlstyle{{same}}
+
+\raggedbottom
+\raggedright
+\setlength{{\tabcolsep}}{{0in}}
+
+% Sections formatting
+\titleformat{{\section}}{{
+  \vspace{{-4pt}}\scshape\raggedright\large
+}}{{}}{{0em}}{{}}[\color{{black}}\titlerule \vspace{{-5pt}}]
+
+% Ensure that generate pdf is machine readable/ATS parsable
+\pdfgentounicode=1
+
+%-------------------------
+% Custom commands
+\newcommand{{\resumeItem}}[1]{{
+  \item\small{{{{#1 \vspace{{-2pt}}}}}}
+}}
+
+\newcommand{{\resumeSubheading}}[4]{{
+  \vspace{{-2pt}}\item
+    \begin{{tabular*}}{{0.97\textwidth}}[t]{{l@{{\extracolsep{{\fill}}}}r}}
+      \textbf{{#1}} & #2 \\
+      \textit{{\small#3}} & \textit{{\small #4}} \\
+    \end{{tabular*}}\vspace{{-7pt}}
+}}
+
+\newcommand{{\resumeSubSubheading}}[2]{{
+    \item
+    \begin{{tabular*}}{{0.97\textwidth}}{{l@{{\extracolsep{{\fill}}}}r}}
+      \textit{{\small#1}} & \textit{{\small #2}} \\
+    \end{{tabular*}}\vspace{{-7pt}}
+}}
+
+\newcommand{{\resumeProjectHeading}}[2]{{
+    \item
+    \begin{{tabular*}}{{0.97\textwidth}}{{l@{{\extracolsep{{\fill}}}}r}}
+      \small#1 & #2 \\
+    \end{{tabular*}}\vspace{{-7pt}}
+}}
+
+\newcommand{{\resumeSubItem}}[1]{{\resumeItem{{#1}}\vspace{{-4pt}}}}
+
+\renewcommand\labelitemii{{$\vcenter{{\hbox{{\tiny$\bullet$}}}}$}}
+
+\newcommand{{\resumeSubHeadingListStart}}{{\begin{{itemize}}[leftmargin=0.15in, label={{}}]}}
+\newcommand{{\resumeSubHeadingListEnd}}{{\end{{itemize}}}}
+\newcommand{{\resumeItemListStart}}{{\begin{{itemize}}}}
+\newcommand{{\resumeItemListEnd}}{{\end{{itemize}}\vspace{{-5pt}}}}
+
+%-------------------------------------------
+%%%%%%  RESUME STARTS HERE  %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{{document}}
+<<< END JG-PREAMBLE >>>
+
+════════════════════════════════════════════════════════════════════════════════
+HEADING
+════════════════════════════════════════════════════════════════════════════════
+- Immediately after \begin{{document}}, create a centered heading:
+  - Line 1: Full name (large, bold).
+  - Line 2: Short branding line (e.g., "Computer Science @ Texas A\&M").
+  - Line 3: Contact info (email, GitHub, LinkedIn, portfolio/applyeasy.tech).
+- Implement with a single \begin{{center}} ... \end{{center}} block.
+- Do NOT define new heading macros.
+
+════════════════════════════════════════════════════════════════════════════════
+ALLOWED SECTIONS (IN THIS ORDER)
+════════════════════════════════════════════════════════════════════════════════
+Generate at most these sections, in this exact order:
+1. Education
+2. Experience
+3. Projects
+4. Leadership \& Activities (optional)
+5. Technical Skills
+
+════════════════════════════════════════════════════════════════════════════════
+SECTION / MACRO RULES
+════════════════════════════════════════════════════════════════════════════════
+- Use ONLY these macros:
+  - \section{{...}}
+  - \resumeSubHeadingListStart / \resumeSubHeadingListEnd
+  - \resumeSubheading{{ORG}}{{Location}}{{Role}}{{Dates}}
+  - \resumeProjectHeading{{Project and Tech Stack}}{{Dates or brief context}}
+  - \resumeItemListStart / \resumeItemListEnd
+  - \resumeItem{{...}}
+- Do NOT define new macros or environments.
+- Do NOT include empty sections. If no content, omit the section entirely.
+
+════════════════════════════════════════════════════════════════════════════════
+PAGE-LENGTH CONTROL (ONE PAGE ONLY)
+════════════════════════════════════════════════════════════════════════════════
+You MUST keep the resume to ONE page with this template. Enforce these hard limits:
+
+EDUCATION:
+- Exactly 1 entry (Texas A\&M).
+- Maximum 2 bullets.
+
+EXPERIENCE:
+- Maximum 2 entries total (prioritize AIPHRODITE and applyeasy.tech).
+- Each entry: maximum 3 bullets.
+
+PROJECTS:
+- Maximum 3 entries total.
+- Each entry: maximum 2 bullets.
+- Priority order:
+  1) carlosOS
+  2) Aggie Events
+  3) ApplyEasy Job Automation Engine or LaTeX Resume Builder \& CLI/Action
+  4) React/Tailwind OSS, hackathons, smaller apps (only if space allows).
+
+LEADERSHIP \& ACTIVITIES:
+- OPTIONAL. Include ONLY if there is clear space after core sections.
+- If included: maximum 1 entry with maximum 2 bullets.
+
+TECHNICAL SKILLS:
+- Always include.
+- Single compact block (2–4 lines), no \resumeItem bullets.
+- Order skills by relevance to the TARGET job description.
+
+GLOBAL BULLET CAP:
+- Across the entire resume, the total number of \resumeItem bullets MUST NOT exceed 18.
+- If more than 18 bullets would be produced:
+  - First drop bullets least relevant to the job description.
+  - Then drop low-priority projects (e.g., hackathons, smaller apps) if needed.
+
+════════════════════════════════════════════════════════════════════════════════
+TRIMMING RULES
+════════════════════════════════════════════════════════════════════════════════
+If content risks exceeding one page:
+1. First shorten bullets by removing less important clauses while preserving grammar and meaning.
+2. Then remove bullets from lower-priority sections (small projects, extra leadership).
+3. Do NOT add manual \vspace or extra blank lines; rely only on the provided macros.
+
+════════════════════════════════════════════════════════════════════════════════
+PRIORITY ORDER (WHAT TO KEEP WHEN SPACE IS TIGHT)
+════════════════════════════════════════════════════════════════════════════════
+Preserve content in this order:
+
+1. Education with GPA.
+2. Experience:
+   - AIPHRODITE (team lead + ML / full-stack).
+   - applyeasy.tech / ApplyEasy Job Automation Engine (SaaS + n8n automation + mobile).
+3. Projects:
+   - carlosOS (educational OS).
+   - Aggie Events (full-stack web).
+   - LaTeX Resume Builder \& CLI/Action.
+   - React/Tailwind OSS contribution (only if space).
+4. Technical Skills (always present).
+
+Drop or heavily compress first:
+- Smaller hackathon/side projects (Monee, Studytick, etc.).
+- Extra leadership/activities beyond 1–2 bullets.
+
+════════════════════════════════════════════════════════════════════════════════
+BULLET STYLE
+════════════════════════════════════════════════════════════════════════════════
+- Education: maximum 2 bullets (coursework + note on writing-intensive/spec work).
+- Each Experience: 2–3 bullets, focused on:
+  - Metrics, systems/infra, AI/automation, production impact, leadership.
+- Each Project: 1–2 bullets, focused on:
+  - Tech stack, ownership, impact (performance, reliability, users, or time saved).
+- Begin bullets with strong action verbs: Built, Implemented, Designed, Led, Deployed, Optimized, Containerized, Automated, Architected, Developed, Integrated, Configured, etc.
+- Every bullet should include at least one keyword from the job description when possible.
+
+════════════════════════════════════════════════════════════════════════════════
+TARGETING & KEYWORDS
+════════════════════════════════════════════════════════════════════════════════
+- The job description is provided as input. Extract keywords from it directly.
+- Use the ATS KEYWORD BANK below as a reference for exact terminology.
+- Prefer bullets and entries that naturally match the job description's requirements.
+- Do NOT keyword-stuff; include keywords only when they reflect actual work.
+- Select the appropriate bullet variations (Backend/ML/Full-Stack/Leadership) based on job emphasis.
+
+════════════════════════════════════════════════════════════════════════════════
+PLACEHOLDERS / CLEANUP — CRITICAL
+════════════════════════════════════════════════════════════════════════════════
+- NEVER output raw placeholders like {{X}}, {{Y}}, {{N}}, {{K}}, {{PROJECT_NAME}}, {{optional}}, [NUMBER], etc.
+- Use the specific numbers from the METRICS REFERENCE section below.
+- If a specific metric is not available, rewrite the bullet without that metric.
+- Remove any control/meta markers such as TARGET_ROLE, COMPANY_TARGET, CONTROL, JOB_SNIPPET, etc. from the final LaTeX.
+
+════════════════════════════════════════════════════════════════════════════════
+STYLE / ATS
+════════════════════════════════════════════════════════════════════════════════
+- ATS-safe:
+  - No icons, no images, no extra tables beyond the tabulars in the template.
+  - Clear section headings (Education, Experience, Projects, Technical Skills).
+  - Simple bullet lists with quantified achievements.
+- Tone:
+  - Professional, concise, concrete.
+  - Clearly convey what was built and why it mattered (performance, reliability, users, time saved).
+  - Use the employer's language from the job description.
+
+════════════════════════════════════════════════════════════════════════════════
+FINALIZATION
+════════════════════════════════════════════════════════════════════════════════
+- Use the DATA section below to select and compress content into a single page.
+- Respect all caps, priorities, and keyword matching rules above.
+- Verify all braces are balanced before outputting.
+- After all sections are generated, end with: \end{{document}}
+
+════════════════════════════════════════════════════════════════════════════════
+════════════════════════════════════════════════════════════════════════════════
+DATA (SOURCE FOR CONTENT)
+════════════════════════════════════════════════════════════════════════════════
+════════════════════════════════════════════════════════════════════════════════
+
+NOTE: Do NOT emit labels like "DATA", "CONTACT", "METRICS REFERENCE", etc. in the final output.
+Use this section only as source material for generating the resume content.
+
+────────────────────────────────────────────────────────────────────────────────
+CONTACT
+────────────────────────────────────────────────────────────────────────────────
+NAME: Carlos Luna-Peña
+PHONE: 956-966-0986
+EMAIL: carlunpen@gmail.com
+LINKEDIN: https://linkedin.com/in/carlos-luna
+GITHUB: https://github.com/clmoon2
+LOCATION: College Station, TX
+PORTFOLIO: applyeasy.tech (include when relevant to role)
+
+────────────────────────────────────────────────────────────────────────────────
+METRICS REFERENCE (USE THESE EXACT NUMBERS)
+────────────────────────────────────────────────────────────────────────────────
+Use these real metrics instead of placeholders:
+
+AIPHRODITE:
+- Team size: 6 engineers
+- Wardrobe items processed: 500+
+- CV tagging accuracy: 87%
+- Recommended outfit click-through improvement: 25%
+- PR rework reduction: 35%
+
+APPLYEASY.TECH:
+- Jobs processed per day: 100+
+- Manual application time reduction: 75%
+- Users: early adopters (do not specify number; say "early users" or "beta users")
+
+AGGIE EVENTS:
+- Team size: 8 engineers
+- Query latency improvement (p95): 40%
+
+HECM HACKATHON:
+- Placement: Top 4 out of 30 teams
+
+GENERAL (use when specific metrics unavailable):
+- For latency improvements: 35-45%
+- For throughput improvements: 2-3x
+- For time savings: 60-80%
+- For accuracy: 85-92%
+
+────────────────────────────────────────────────────────────────────────────────
+TARGETING (populated dynamically from job description)
+────────────────────────────────────────────────────────────────────────────────
+NOTE: Extract TARGET_ROLE, TARGET_KEYWORDS, and key requirements directly from the job description provided as input. Do not output these labels in the final resume.
+
+────────────────────────────────────────────────────────────────────────────────
+SUMMARY (2–3 lines, keyword-rich, truthful)
+────────────────────────────────────────────────────────────────────────────────
+CS student at Texas A\&M (Major GPA 3.62) building production web applications, AI systems, automation pipelines, and low-level tools. Led 6-person team shipping AIPHRODITE (AI fashion advisor with LangChain/RAG); founded applyeasy.tech (job automation SaaS with n8n, OpenAI, and LaTeX resume tooling). Fluent in TypeScript, React, Next.js, Node.js, Python, C/C++, PostgreSQL, and Linux; experienced with Docker, CI/CD, and cloud APIs.
+
+────────────────────────────────────────────────────────────────────────────────
+EDUCATION
+────────────────────────────────────────────────────────────────────────────────
+Texas A\&M University — College Station, TX
+B.S. in Computer Science • Major GPA: 3.62/4.00 • Aug. 2023 — Present
+
+Bullet options (choose up to 2):
+- Relevant Coursework: Software Engineering, Algorithms, Operating Systems, Artificial Intelligence, Computer Security, Computer Systems, Data Structures.
+- Completed writing-intensive coursework including specifications, user stories, retrospectives, demos, and peer evaluations.
+
+────────────────────────────────────────────────────────────────────────────────
+EXPERIENCE
+────────────────────────────────────────────────────────────────────────────────
+
+>>> AIPHRODITE (Aggies Create) — Technical Lead \& Full Stack / ML — College Station, TX — Sep. 2024 — Present
+
+Tech Stack: Next.js, React, Tailwind CSS, TypeScript, PostgreSQL, Prisma, FastAPI, Python, OpenAI API, LangChain, Hugging Face, Docker, GitHub Actions
+
+BULLET VARIATIONS (choose 2-3 based on job type):
+
+For Backend/API roles:
+- Architected FastAPI backend serving computer vision embeddings and outfit recommendations to 500+ wardrobe items; designed PostgreSQL schema with composite indexes reducing query latency by 40\%.
+- Built RESTful API endpoints for image tagging (category, color, pattern) achieving 87\% classification accuracy; implemented efficient database queries with Prisma ORM.
+- Containerized microservices with Docker and configured GitHub Actions CI/CD pipeline for automated testing and deployment.
+
+For ML/AI roles:
+- Developed RAG-powered AI fashion advisor using LangChain and OpenAI embeddings over 500+ wardrobe items; users can ask natural language questions about fit, styling, and outfit pairing.
+- Implemented computer vision pipeline for clothing classification (category, color, pattern) achieving 87\% accuracy; integrated Hugging Face models for feature extraction.
+- Designed outfit recommendation engine using weather, occasion, and color harmony signals; improved click-through rate on recommendations by 25\% in prototype testing.
+
+For Full-Stack roles:
+- Led 6-person engineering team building Next.js/React frontend with Tailwind CSS; integrated real-time outfit recommendations via FastAPI backend and PostgreSQL.
+- Built responsive UI components for wardrobe management, outfit creation, and AI-powered styling suggestions; implemented end-to-end user flows from image upload to recommendation.
+- Integrated OpenAI Vision API for automated clothing tagging; reduced manual data entry time by 80\% for users.
+
+For Leadership roles:
+- Directed 6-person cross-functional team through 2-week sprints with daily standups, backlog grooming, and PR reviews; reduced rework rate by 35\%.
+- Authored onboarding documentation and code standards; mentored new team members on codebase architecture and development workflows.
+- Maintained demo-ready builds throughout development cycle; coordinated feature releases with stakeholder presentations.
+
+>>> applyeasy.tech — Founder \& Full-Stack / Automation Engineer — Remote — 2025
+
+Tech Stack: n8n, React, React Native, Node.js, TypeScript, OpenAI API, Apify, Google Slides API, Google Sheets API, Gmail API, GitHub, LaTeX
+
+BULLET VARIATIONS (choose 2-3 based on job type):
+
+For Backend/Automation roles:
+- Built end-to-end job application automation pipeline using n8n: scrapes 100+ jobs/day via Apify, filters with OpenAI, generates tailored LaTeX resumes, and sends personalized outreach emails.
+- Designed fault-tolerant workflow orchestration with conditional branching, batch processing, structured logging, and retry logic; reduced silent failures by 90\%.
+- Integrated Google Workspace APIs (Slides, Sheets, Gmail) for automated document generation and email sequences; hosted compiled PDFs on GitHub for reliable delivery.
+
+For Full-Stack/Product roles:
+- Founded applyeasy.tech, a SaaS platform automating job applications: role discovery, AI-powered filtering, resume generation, and outreach sequencing—reducing manual application time by 75\%.
+- Built React Native mobile companion app with interactive UI for reviewing roles, adjusting preferences, and monitoring application status in real-time.
+- Iterated on product based on beta user feedback; optimized prompts, filtering thresholds, and UX flows to improve match quality and user satisfaction.
+
+For AI/ML roles:
+- Implemented GPT-powered job relevance scoring using OpenAI API; designed prompts that accurately filter roles matching user preferences and qualifications.
+- Built intelligent resume tailoring system that analyzes job descriptions, extracts keywords, and generates customized LaTeX resumes optimized for ATS parsing.
+- Automated decision-maker lookup and personalized email generation; integrated multiple AI models for different stages of the application pipeline.
+
+────────────────────────────────────────────────────────────────────────────────
+PROJECTS
+────────────────────────────────────────────────────────────────────────────────
+
+>>> carlosOS (Educational Operating System) — C, C++, x86 Assembly, QEMU, Make, GDB
+
+BULLET VARIATIONS (choose 1-2):
+
+For Systems/Low-Level roles:
+- Implementing minimal x86 bootloader and kernel with custom memory management, process scheduling, and system call interface; developing in C/C++ with QEMU for testing.
+- Designed basic process model with round-robin scheduler and IPC mechanisms; implemented fork, exec, pipe, and signal handling based on Unix semantics.
+- Built userland shell supporting pipelines, I/O redirection, and background job control; documented build system for reproducible cross-compilation.
+
+For General SWE roles:
+- Building educational operating system from scratch in C/C++: bootloader, kernel, process scheduler, and system calls; testing with QEMU and GDB.
+- Implemented Unix-style shell with process management (fork/exec), pipelines (pipe/dup2), and I/O redirection; applied concepts from computer systems coursework.
+
+>>> Aggie Events — TypeScript, Next.js, React, Tailwind CSS, Node.js, PostgreSQL, Docker, Google OAuth, GitHub Actions
+
+BULLET VARIATIONS (choose 1-2):
+
+For Full-Stack roles:
+- Built full-stack event discovery platform with 8-person team: responsive Next.js frontend, Node.js API, and PostgreSQL database serving campus organizations and students.
+- Implemented Google OAuth authentication with secure session cookies, CORS configuration, and environment-based secrets management.
+- Extended PostgreSQL schema for events, organizations, and user interactions; added composite indexes reducing p95 query latency by 40\%.
+
+For Backend roles:
+- Designed and optimized PostgreSQL schema for events, organizations, likes, and views; implemented query tuning with EXPLAIN ANALYZE reducing p95 latency by 40\%.
+- Configured monorepo CI/CD pipeline with GitHub Actions: automated linting, type-checking, and testing with branch protection rules.
+
+For Frontend roles:
+- Built responsive React components for event search, detail views, organization pages, and user settings using Next.js and Tailwind CSS.
+- Implemented accessible UI patterns with keyboard navigation, focus management, and semantic HTML; ensured mobile-first responsive design.
+
+>>> ApplyEasy Job Automation Engine — n8n, OpenAI API, Apify, Google APIs, GitHub, LaTeX
+
+BULLET OPTIONS (choose 1-2):
+- Architected core automation engine for applyeasy.tech: orchestrated job scraping, LLM-based filtering, LaTeX resume generation, and email outreach using n8n workflow primitives.
+- Implemented reliable data pipelines with Split in Batches, conditional branching, HTTP Request nodes, and structured error handling; processes 100+ job postings daily.
+- Designed LaTeX resume template system with JSON configuration; automated PDF compilation and GitHub hosting for seamless delivery.
+
+>>> LaTeX Resume Builder \& CLI/Action — TypeScript, Node.js, LaTeX, GitHub Actions
+
+BULLET OPTIONS (choose 1-2):
+- Developed JSON-to-LaTeX resume generator with TypeScript CLI; compiles structured resume data into ATS-optimized single-page PDFs.
+- Published reusable GitHub Action that automatically builds resume PDFs on push and uploads artifacts; documented integration for developer workflows.
+- Designed extensible JSON schema for resume sections (education, experience, projects, skills); template supports customization while maintaining consistent formatting.
+
+>>> React Component Library OSS Contribution — React, TypeScript, Tailwind CSS, Storybook
+
+BULLET OPTIONS (choose 1-2):
+- Contributed accessibility improvements to open-source React/Tailwind component library: implemented keyboard navigation, focus management, and ARIA attributes for Tabs, Modal, and Button components.
+- Updated Storybook documentation with usage examples and accessibility guidelines; iterated on changes based on maintainer code review feedback.
+
+>>> Monee (TAMUhack 2025) — Next.js, React, TypeScript, Gemini API, Framer Motion
+
+BULLET OPTIONS (choose 1-2):
+- Built gamified financial literacy app with savings challenges and point system; implemented modern UI with Framer Motion micro-interactions.
+- Integrated CSV import for spending analysis and Gemini API for personalized financial advice; designed goal tracking dashboard.
+
+>>> Studytick (Desktop Productivity App) — Electron, React, TypeScript, SQLite
+
+BULLET OPTIONS (choose 1-2):
+- Developed cross-platform Pomodoro timer with persistent session tracking, statistics visualization, and auto-update functionality using Electron.
+- Implemented secure IPC architecture with preload scripts isolating renderer from Node APIs; built SQLite storage layer for offline data persistence.
+
+>>> HECM Hackathon — Raspberry Pi, Python, OpenCV, Robotics
+
+BULLET OPTIONS (choose 1-2):
+- Placed Top 4 out of 30 teams; built gesture and face tracking system controlling 6-axis robotic arm using Raspberry Pi and OpenCV.
+- Documented reproducible hardware setup (BOM, wiring diagrams, software installation) enabling future teams to extend the project.
+
+────────────────────────────────────────────────────────────────────────────────
+LEADERSHIP & ACTIVITIES
+────────────────────────────────────────────────────────────────────────────────
+BULLET OPTIONS (choose 1-2 if including this section):
+
+- Team Lead, AIPHRODITE: Directed 6-person engineering team with sprint planning, daily standups, and PR reviews; maintained demo-ready builds and reduced rework by 35\%.
+- Founder, applyeasy.tech: Owned full product lifecycle from ideation to launch; gathered user feedback, prioritized features, and balanced technical debt with new development.
+- Open Source Contributor: Followed contribution guidelines for React/Tailwind projects; engaged in issue discussions and incorporated maintainer feedback through multiple PR iterations.
+- CSCE 331 Team Member: Delivered consistent commits, demo-ready builds, and strong peer evaluations; participated in retrospectives that improved team processes.
+
+────────────────────────────────────────────────────────────────────────────────
+TECHNICAL SKILLS
+────────────────────────────────────────────────────────────────────────────────
+Format as a compact block (2-4 lines). Order categories and skills by relevance to the target job.
+
+TEMPLATE:
+\section{{Technical Skills}}
+\begin{{itemize}}[leftmargin=0.15in, label={{}}]
+  \small{{\item{{
+    \textbf{{Languages}}{{: [order by job relevance]}} \\
+    \textbf{{Frameworks/Libraries}}{{: [order by job relevance]}} \\
+    \textbf{{Databases}}{{: [order by job relevance]}} \\
+    \textbf{{Tools/Platforms}}{{: [order by job relevance]}}
+  }}}}
+\end{{itemize}}
+
+AVAILABLE SKILLS (select and order based on job description):
+
+Languages: TypeScript, JavaScript, Python, Java, C, C++, SQL, Bash, HTML, CSS
+Frameworks/Libraries: React, React.js, Next.js, React Native, Node.js, Express, FastAPI, Tailwind CSS, LangChain, Electron, Framer Motion
+Databases: PostgreSQL, SQLite, Redis, Prisma ORM
+Tools/Platforms: Git, GitHub, GitHub Actions, Docker, Linux, n8n, Apify, QEMU, GDB, LaTeX
+Cloud/APIs: OpenAI API, Google APIs (Slides, Sheets, Gmail, OAuth), Hugging Face, REST APIs
+Concepts: Data Structures, Algorithms, Operating Systems, CI/CD, Agile/Scrum, Test-Driven Development, Microservices, RAG, Prompt Engineering
+
+════════════════════════════════════════════════════════════════════════════════
+════════════════════════════════════════════════════════════════════════════════
+ATS KEYWORD BANK (ORGANIZED BY CATEGORY)
+════════════════════════════════════════════════════════════════════════════════
+════════════════════════════════════════════════════════════════════════════════
+
+Use this bank to match exact terminology from job descriptions. Select keywords that reflect actual experience.
+
+────────────────────────────────────────────────────────────────────────────────
+PROGRAMMING LANGUAGES
+────────────────────────────────────────────────────────────────────────────────
+TypeScript, JavaScript, Python, Java, C, C++, SQL, Bash, shell scripting, HTML5, CSS3, x86 Assembly
+
+────────────────────────────────────────────────────────────────────────────────
+FRONTEND & UI
+────────────────────────────────────────────────────────────────────────────────
+React, React.js, Next.js, React Native, Tailwind, Tailwind CSS, CSS, HTML5, JavaScript, TypeScript, JSX, responsive design, mobile-first design, single-page application, SPA, accessibility, a11y, WCAG, ARIA attributes, keyboard navigation, focus management, UI components, design systems, Storybook, Framer, Framer Motion, animations, micro-interactions
+
+────────────────────────────────────────────────────────────────────────────────
+BACKEND & APIs
+────────────────────────────────────────────────────────────────────────────────
+Node.js, Express, FastAPI, REST, REST API, RESTful APIs, API development, HTTP, JSON, server-side rendering, SSR, client-side rendering, CSR, microservices, MVC, routing, middleware, request/response, pagination, rate limiting, caching, error handling, webhooks
+
+────────────────────────────────────────────────────────────────────────────────
+DATABASES & DATA
+────────────────────────────────────────────────────────────────────────────────
+PostgreSQL, Postgres, SQLite, SQL, Redis, relational databases, database design, schema design, normalization, migrations, indexes, indexing, query optimization, query tuning, EXPLAIN ANALYZE, connection pooling, ACID, transactions, Prisma, ORM, data modeling
+
+────────────────────────────────────────────────────────────────────────────────
+AUTHENTICATION & SECURITY
+────────────────────────────────────────────────────────────────────────────────
+OAuth, OAuth2, Google OAuth, JWT, JSON Web Tokens, sessions, secure cookies, CORS, RBAC, role-based access control, authentication, authorization, security best practices, HTTPS, encryption
+
+────────────────────────────────────────────────────────────────────────────────
+DEVOPS & CI/CD
+────────────────────────────────────────────────────────────────────────────────
+Git, GitHub, GitHub Actions, CI/CD, continuous integration, continuous deployment, Docker, containers, containerization, Kubernetes, deployment, build pipelines, automated testing, unit tests, integration tests, end-to-end tests, E2E tests, test-driven development, TDD, linting, type-checking, static analysis, code review, pull requests, branch protection, version control
+
+────────────────────────────────────────────────────────────────────────────────
+CLOUD & INFRASTRUCTURE
+────────────────────────────────────────────────────────────────────────────────
+AWS, Google Cloud, GCP, Azure, cloud computing, serverless, Linux, Unix, POSIX, terminal, shell, infrastructure, scalability, high availability, load balancing, monitoring, logging, observability
+
+────────────────────────────────────────────────────────────────────────────────
+AI & MACHINE LEARNING
+────────────────────────────────────────────────────────────────────────────────
+machine learning, ML, artificial intelligence, AI, deep learning, neural networks, OpenAI, OpenAI API, GPT, GPT-4, LLMs, large language models, LangChain, RAG, retrieval-augmented generation, embeddings, vector search, semantic search, cosine similarity, Hugging Face, Transformers, computer vision, image classification, image tagging, feature extraction, NLP, natural language processing, prompt engineering, prompt design, fine-tuning, model integration
+
+────────────────────────────────────────────────────────────────────────────────
+RECOMMENDATION & PERSONALIZATION
+────────────────────────────────────────────────────────────────────────────────
+recommendation systems, recommender systems, personalization, ranking, collaborative filtering, content-based filtering, click-through rate, CTR, A/B testing, user engagement
+
+────────────────────────────────────────────────────────────────────────────────
+AUTOMATION & INTEGRATION
+────────────────────────────────────────────────────────────────────────────────
+workflow automation, orchestration, n8n, Zapier, automation pipelines, ETL, data pipelines, data ingestion, batch processing, web scraping, Apify, crawlers, API integration, webhooks, scheduled jobs, retry logic, error handling, logging, monitoring
+
+────────────────────────────────────────────────────────────────────────────────
+GOOGLE WORKSPACE APIs
+────────────────────────────────────────────────────────────────────────────────
+Google APIs, Google Slides API, Google Sheets API, Google Drive API, Gmail API, Google Docs API, Google OAuth, Google Cloud APIs, Google Workspace
+
+────────────────────────────────────────────────────────────────────────────────
+SYSTEMS & LOW-LEVEL PROGRAMMING
+────────────────────────────────────────────────────────────────────────────────
+operating systems, OS, kernel, bootloader, processes, threads, concurrency, multithreading, synchronization, mutex, semaphore, interprocess communication, IPC, pipes, sockets, fork, exec, execvp, waitpid, signals, system calls, syscalls, memory management, virtual memory, scheduling, scheduler, context switching, interrupts, file systems, I/O, QEMU, GDB, debugging, cross-compilation, Make, Makefile, embedded systems
+
+────────────────────────────────────────────────────────────────────────────────
+MOBILE DEVELOPMENT
+────────────────────────────────────────────────────────────────────────────────
+React Native, mobile development, iOS, Android, mobile UI, touch interactions, gestures, navigation, mobile-first, responsive, cross-platform, Expo
+
+────────────────────────────────────────────────────────────────────────────────
+DESKTOP DEVELOPMENT
+────────────────────────────────────────────────────────────────────────────────
+Electron, desktop applications, cross-platform, native apps, installers, auto-update, IPC, preload scripts, SQLite
+
+────────────────────────────────────────────────────────────────────────────────
+METHODOLOGIES & SOFT SKILLS
+────────────────────────────────────────────────────────────────────────────────
+Agile, Scrum, Kanban, sprint planning, standups, daily standups, retrospectives, backlog grooming, story points, velocity, cross-functional teams, collaboration, team leadership, technical leadership, mentoring, code review, pair programming, documentation, requirements gathering, stakeholder communication, problem solving, critical thinking, communication skills
+
+────────────────────────────────────────────────────────────────────────────────
+ALGORITHMS & COMPUTER SCIENCE
+────────────────────────────────────────────────────────────────────────────────
+data structures, algorithms, complexity analysis, time complexity, space complexity, Big O, sorting, searching, graphs, trees, dynamic programming, recursion, hash tables, linked lists, stacks, queues, heaps, binary search, BFS, DFS, system design, object-oriented programming, OOP, functional programming, design patterns
+
+────────────────────────────────────────────────────────────────────────────────
+DOCUMENT & CONTENT GENERATION
+────────────────────────────────────────────────────────────────────────────────
+LaTeX, PDF generation, document automation, template engines, JSON-to-LaTeX, resume automation, content generation, Markdown
+
+────────────────────────────────────────────────────────────────────────────────
+PERFORMANCE & OPTIMIZATION
+────────────────────────────────────────────────────────────────────────────────
+performance optimization, latency, p95 latency, p99 latency, throughput, response time, load time, caching, memoization, lazy loading, code splitting, profiling, benchmarking, scalability
+
+────────────────────────────────────────────────────────────────────────────────
+ROLE-SPECIFIC KEYWORDS
+────────────────────────────────────────────────────────────────────────────────
+software engineer, software developer, backend engineer, frontend engineer, full-stack engineer, full stack developer, web developer, mobile developer, systems engineer, platform engineer, DevOps engineer, ML engineer, AI engineer, data engineer, SWE, SDE, intern, internship, new grad, entry-level, junior developer
+
+════════════════════════════════════════════════════════════════════════════════
+END OF RESUME BUILDER HELPER
+════════════════════════════════════════════════════════════════════════════════
+

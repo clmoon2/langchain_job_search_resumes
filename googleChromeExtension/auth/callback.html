@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Authentication - Tailored Resume</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    .container {
+      background: white;
+      padding: 40px;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+      text-align: center;
+      max-width: 400px;
+    }
+    
+    .spinner {
+      width: 50px;
+      height: 50px;
+      border: 4px solid #f3f3f3;
+      border-top: 4px solid #667eea;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 20px;
+    }
+    
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    
+    h1 {
+      color: #333;
+      margin-bottom: 10px;
+      font-size: 24px;
+    }
+    
+    p {
+      color: #666;
+      margin-bottom: 20px;
+    }
+    
+    .success {
+      color: #4CAF50;
+    }
+    
+    .error {
+      color: #F44336;
+    }
+    
+    .icon {
+      font-size: 48px;
+      margin-bottom: 20px;
+      font-weight: bold;
+    }
+    
+    .icon.success-icon {
+      color: #4CAF50;
+    }
+    
+    .icon.error-icon {
+      color: #F44336;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div id="loading">
+      <div class="spinner"></div>
+      <h1>Authenticating...</h1>
+      <p>Please wait while we complete your sign in.</p>
+    </div>
+    
+    <div id="success" style="display: none;">
+      <div class="icon success-icon">[OK]</div>
+      <h1 class="success">Success!</h1>
+      <p>You're now signed in. This window will close automatically.</p>
+    </div>
+    
+    <div id="error" style="display: none;">
+      <div class="icon error-icon">[ERROR]</div>
+      <h1 class="error">Authentication Failed</h1>
+      <p id="error-message">Something went wrong. Please try again.</p>
+    </div>
+  </div>
+
+  <script src="callback.js"></script>
+</body>
+</html>

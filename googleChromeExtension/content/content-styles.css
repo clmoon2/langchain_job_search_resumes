@@ -1,0 +1,166 @@
+/**
+ * Content Script Styles
+ * 
+ * Styles for the UI overlay injected into job application pages.
+ */
+
+#tailored-resume-overlay {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 2147483647;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  pointer-events: none;
+}
+
+#tailored-resume-overlay.tr-visible {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.tr-overlay-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+/* Autofill Button */
+.tr-autofill-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  border: none;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+  transition: all 0.2s ease;
+}
+
+.tr-autofill-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(102, 126, 234, 0.5);
+}
+
+.tr-autofill-btn:active {
+  transform: translateY(0);
+}
+
+.tr-autofill-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Progress Indicator */
+.tr-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.tr-progress::before {
+  content: '';
+  width: 16px;
+  height: 16px;
+  border: 2px solid #667eea;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: tr-spin 0.8s linear infinite;
+}
+
+@keyframes tr-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.tr-progress-text {
+  color: #333;
+}
+
+/* Message */
+.tr-message {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  max-width: 300px;
+}
+
+.tr-message--success {
+  background: #4CAF50;
+  color: white;
+}
+
+.tr-message--error {
+  background: #F44336;
+  color: white;
+}
+
+.tr-message--info {
+  background: white;
+  color: #333;
+}
+
+.tr-message-text {
+  flex: 1;
+}
+
+/* Animation for message appearance */
+.tr-message {
+  animation: tr-slideIn 0.3s ease;
+}
+
+@keyframes tr-slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  .tr-progress {
+    background: #2d2d2d;
+  }
+  
+  .tr-progress-text {
+    color: #e0e0e0;
+  }
+  
+  .tr-message--info {
+    background: #2d2d2d;
+    color: #e0e0e0;
+  }
+}
+
+/* Ensure styles don't get overridden by page styles */
+#tailored-resume-overlay * {
+  box-sizing: border-box;
+  line-height: 1.4;
+}
+
+#tailored-resume-overlay button {
+  font-family: inherit;
+}

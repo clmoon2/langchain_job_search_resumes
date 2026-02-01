@@ -1,0 +1,18 @@
+[Unit]
+Description=Email Outreach Flow - Send job application emails with follow-ups
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=carlu
+WorkingDirectory=/home/carlu/langchain_job_search_resumes
+ExecStart=/home/carlu/langchain_job_search_resumes/.venv/bin/python email_outreach_flow.py
+StandardOutput=append:/home/carlu/langchain_job_search_resumes/email_outreach.log
+StandardError=append:/home/carlu/langchain_job_search_resumes/email_outreach.log
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

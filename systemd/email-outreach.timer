@@ -1,0 +1,19 @@
+[Unit]
+Description=Daily email outreach at 8:30am Chicago time
+
+[Timer]
+# Run at 8:30am Chicago time (America/Chicago)
+OnCalendar=*-*-* 08:30:00
+# Ensure timezone is set correctly
+# Note: systemd uses system timezone. Set system to America/Chicago or use:
+# OnCalendar=*-*-* 14:30:00 UTC  (8:30 CST = 14:30 UTC during standard time)
+# OnCalendar=*-*-* 13:30:00 UTC  (8:30 CDT = 13:30 UTC during daylight time)
+
+# If the system was off when the timer should have fired, run it when it comes back
+Persistent=true
+
+# Add some randomness to avoid thundering herd (0-60 seconds)
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

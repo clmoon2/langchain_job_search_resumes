@@ -11,11 +11,15 @@ Workflow Steps:
 4. Filter out already-applied jobs (deduplication)
 5. AI-filter jobs for fit (GPT-4.1-mini)
 6. Generate tailored LaTeX resume (GPT-4o)
-7. Upload to GitHub (triggers GitHub Actions for PDF compilation)
-8. Create Google Slides presentation page
-9. Find decision-maker email (AnyMailFinder)
-10. Append results to Google Sheets
-11. Loop for all jobs
+7. Compile LaTeX to PDF locally using pdflatex
+8. Upload both .tex and .pdf files to GitHub
+9. Create Google Slides presentation page
+10. Find decision-maker email (AnyMailFinder)
+11. Append results to Google Sheets
+12. Loop for all jobs
+
+Requirements:
+- pdflatex must be installed (texlive-latex-base, texlive-fonts-recommended, texlive-latex-extra)
 
 Author: Carlos Luna-Peña
 """
@@ -25,30 +29,28 @@ import json
 import base64
 import re
 import time
+import subprocess
+import tempfile
+import shutil
+import uuid
+from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple, Union
 from dataclasses import dataclass
-import asyncio
 from dotenv import load_dotenv
 
 # LangChain imports
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
 from langchain_core.output_parsers import JsonOutputParser, StrOutputParser
-from langchain_core.runnables import RunnablePassthrough, RunnableLambda
-from langchain.callbacks import get_openai_callback
 
 # External API clients
 import requests
-from google.oauth2.credentials import Credentials
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from urllib.parse import urlparse
-
-# For async operations
-import aiohttp
-import asyncio
+import click
 
 
 # =============================================================================
@@ -69,13 +71,13 @@ class Config:
     
     # GitHub
     GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
-    GITHUB_REPO: str = os.getenv("GITHUB_REPO", "clmoon2/resumes")
+    GITHUB_REPO: str = os.getenv("GITHUB_REPO", "applyEasy/Backend")
     
     # Google (service account JSON provided via env string)
     GOOGLE_SERVICE_ACCOUNT_JSON: str = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
-    GOOGLE_SHEETS_ID: str = os.getenv("GOOGLE_SHEETS_ID", "1HVaAPN3KYSILOZ0soHIZQG8dAP6lWFewQ-woltg4YUE")
-    GOOGLE_DOCS_ID: str = os.getenv("GOOGLE_DOCS_ID", "16ngTeKOIZtOB_041Wcr0AwKec2f-1WBBgeEabAgnYr0")
-    GOOGLE_SLIDES_ID: str = os.getenv("GOOGLE_SLIDES_ID", "1ryNtxMWdDvYhAftE-udf0ECqGNHFYjgevapbi9gcPdY")
+    GOOGLE_SHEETS_ID: str = os.getenv("GOOGLE_SHEETS_ID", "")
+    GOOGLE_DOCS_ID: str = os.getenv("GOOGLE_DOCS_ID", "")
+    GOOGLE_SLIDES_ID: str = os.getenv("GOOGLE_SLIDES_ID", "")
     
     # AnyMailFinder
     ANYMAILFINDER_API_KEY: str = os.getenv("ANYMAILFINDER_API_KEY", "")
@@ -90,6 +92,7 @@ class Config:
     CANDIDATE_NAME: str = os.getenv("CANDIDATE_NAME", "Carlos Luna-Peña")
     
     # Timing / retries
+    # DEPRECATED: No longer used - PDF is now compiled locally before upload
     WAIT_FOR_PDF_SECONDS: int = int(os.getenv("WAIT_FOR_PDF_SECONDS", str(6 * 60)))
     REQUEST_TIMEOUT_SECONDS: int = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "45"))
     REQUEST_RETRIES: int = int(os.getenv("REQUEST_RETRIES", "3"))
@@ -99,13 +102,97 @@ class Config:
 config = Config()
 
 
+def check_pdflatex_installed() -> Tuple[bool, str]:
+    """
+    Check if pdflatex is available and required packages are installed.
+
+    Returns:
+        Tuple of (success: bool, error_message: str)
+    """
+    # First check if pdflatex binary exists
+    try:
+        result = subprocess.run(
+            ['pdflatex', '--version'],
+            capture_output=True,
+            timeout=10
+        )
+        if result.returncode != 0:
+            return False, "pdflatex not found or not working"
+    except FileNotFoundError:
+        return False, "pdflatex not found. Please install texlive."
+    except subprocess.TimeoutExpired:
+        return False, "pdflatex version check timed out"
+
+    # Test compilation with packages used by resume template
+    test_latex = r"""
+\documentclass[letterpaper,11pt]{article}
+\usepackage{latexsym}
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
+\usepackage{marvosym}
+\usepackage[usenames,dvipsnames]{color}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{fancyhdr}
+\usepackage[english]{babel}
+\usepackage{tabularx}
+\begin{document}
+Test
+\end{document}
+"""
+
+    temp_dir = tempfile.mkdtemp(prefix='latex_test_')
+    test_tex = Path(temp_dir) / "test.tex"
+    test_pdf = Path(temp_dir) / "test.pdf"
+
+    try:
+        test_tex.write_text(test_latex, encoding='utf-8')
+        result = subprocess.run(
+            ['pdflatex', '-interaction=nonstopmode', '-halt-on-error', 'test.tex'],
+            cwd=temp_dir,
+            capture_output=True,
+            timeout=30,
+            text=True
+        )
+
+        if result.returncode != 0:
+            # Extract the error from pdflatex output
+            output_lines = result.stdout.split('\n')
+            error_lines = [l for l in output_lines if l.startswith('!') or 'Fatal error' in l]
+            if error_lines:
+                error_msg = error_lines[0]
+            else:
+                # Look for missing package errors
+                missing_pkg = [l for l in output_lines if 'File' in l and 'not found' in l]
+                if missing_pkg:
+                    error_msg = missing_pkg[0]
+                else:
+                    error_msg = "Test compilation failed (check LaTeX packages)"
+            return False, error_msg
+
+        if not test_pdf.exists():
+            return False, "Test compilation produced no PDF output"
+
+        return True, ""
+
+    except subprocess.TimeoutExpired:
+        return False, "Test compilation timed out (30s)"
+    except Exception as e:
+        return False, f"Test compilation error: {e}"
+    finally:
+        try:
+            shutil.rmtree(temp_dir)
+        except Exception:
+            pass
+
+
 # =============================================================================
 # PROMPTS
 # =============================================================================
 
 JOB_FILTER_SYSTEM_PROMPT = """You are a strict job filter for ONE candidate.
 Decide if a job is a reasonable fit for this candidate.
-Output ONLY compact JSON: {"verdict":"true"} or {"verdict":"false"}.
+Output ONLY compact JSON: {{"verdict":"true"}} or {{"verdict":"false"}}.
 """
 
 JOB_FILTER_USER_PROMPT = """CANDIDATE SUMMARY
@@ -180,7 +267,7 @@ LATEX VALIDATION RULES (CRITICAL - VIOLATIONS CAUSE FAILURE)
 
 1. NEVER use placeholder values like {X}, {Y}, [NUMBER], {PLACEHOLDER}
    - Always use specific realistic numbers: "reduced latency by 35%", "improved throughput by 2.5x"
-   
+
 2. BRACE MATCHING (COUNT CAREFULLY):
    - Every { must have a matching }
    - Every \\resumeItem{ must close with } before \\resumeItemListEnd
@@ -303,14 +390,27 @@ def clean_latex(raw: str) -> str:
     return raw.rstrip()
 
 
-def make_credentials(scopes: List[str]) -> Credentials:
-    """Create service account credentials from env-provided JSON."""
-    if not config.GOOGLE_SERVICE_ACCOUNT_JSON:
-        raise ValueError("GOOGLE_SERVICE_ACCOUNT_JSON is required for Google API access")
+def make_credentials(scopes: List[str]) -> service_account.Credentials:
+    """Create service account credentials from env-provided JSON or file path."""
+    source = config.GOOGLE_SERVICE_ACCOUNT_JSON
+    if not source:
+        # Graceful fallback to local file for convenience
+        default_path = "service-account.json"
+        if os.path.isfile(default_path):
+            source = default_path
+        else:
+            raise ValueError("GOOGLE_SERVICE_ACCOUNT_JSON is required for Google API access")
+    
+    if os.path.isfile(source):
+        with open(source, "r", encoding="utf-8") as f:
+            raw_json = f.read()
+    else:
+        raw_json = source
+    
     try:
-        info = json.loads(config.GOOGLE_SERVICE_ACCOUNT_JSON)
+        info = json.loads(raw_json)
     except json.JSONDecodeError as e:
-        raise ValueError("Invalid GOOGLE_SERVICE_ACCOUNT_JSON") from e
+        raise ValueError("Invalid GOOGLE_SERVICE_ACCOUNT_JSON content") from e
     return service_account.Credentials.from_service_account_info(info, scopes=scopes)
 
 
@@ -364,12 +464,17 @@ def generate_file_path(company_name: str, title: str, posted_at: str = None) -> 
     """Generate the file path for the resume"""
     company_slug = slugify(company_name) or "unknown-company"
     title_slug = slugify(title) or "unknown-position"
-    
+
+    # Truncate slugs to prevent overly long filenames (max 50 chars each)
+    company_slug = company_slug[:50]
+    title_slug = title_slug[:50]
+
+    # Extract digits from posted_at, fallback to current date if empty
     if posted_at:
         date_part = re.sub(r'[^0-9]', '', posted_at)
-    else:
+    if not posted_at or not date_part:  # Handle empty string after digit extraction
         date_part = datetime.now().strftime('%Y%m%d')
-    
+
     # Add timestamp for uniqueness
     timestamp = int(time.time())
     filename = f"carlos-luna-pena-{company_slug}-{title_slug}-{date_part}-{timestamp}.tex"
@@ -391,7 +496,7 @@ def validate_required_config() -> None:
     if missing:
         raise ValueError(f"Missing required configuration values: {', '.join(missing)}")
     if not config.ANYMAILFINDER_API_KEY:
-        print("⚠️ ANYMAILFINDER_API_KEY not set; decision-maker email lookup may be skipped.")
+        click.secho("[WARN] ANYMAILFINDER_API_KEY not set; decision-maker email lookup may be skipped.", fg="yellow")
 
 
 def format_salary_info(salary_info: Any) -> str:
@@ -439,40 +544,200 @@ def format_salary_info(salary_info: Any) -> str:
     return clean_string(str(salary_info)) or "Not specified"
 
 
+def extract_pdf_text(pdf_source: Union[str, bytes]) -> str:
+    """Extract text from PDF for ATS scoring.
+
+    Args:
+        pdf_source: Either a file path (str) or PDF bytes (bytes)
+    """
+    try:
+        import fitz  # PyMuPDF - more reliable than PyPDF2
+        if isinstance(pdf_source, bytes):
+            doc = fitz.open(stream=pdf_source, filetype="pdf")
+        else:
+            doc = fitz.open(pdf_source)
+        text = ""
+        for page in doc:
+            text += page.get_text()
+        doc.close()
+        return text
+    except ImportError:
+        try:
+            # Fallback to PyPDF2 (only works with file paths)
+            import PyPDF2
+            if isinstance(pdf_source, bytes):
+                import io
+                f = io.BytesIO(pdf_source)
+            else:
+                f = open(pdf_source, 'rb')
+            try:
+                reader = PyPDF2.PdfReader(f)
+                text = ""
+                for page in reader.pages:
+                    text += page.extract_text() or ""
+                return text
+            finally:
+                f.close()
+        except ImportError:
+            click.secho("   [WARN] Neither PyMuPDF nor PyPDF2 installed, skipping text extraction", fg="yellow")
+            return ""
+    except Exception as e:
+        click.secho(f"   [WARN] PDF text extraction failed: {e}", fg="yellow")
+        return ""
+
+
 def validate_latex_output(latex: str) -> bool:
-    """Basic validation to avoid uploading clearly invalid LaTeX."""
+    """Validate LaTeX output to avoid uploading malformed files that will fail compilation."""
     if not latex:
         return False
-    if "\\documentclass" not in latex or "\\end{document}" not in latex:
+
+    # Check for required structural elements
+    required_elements = ["\\documentclass", "\\begin{document}", "\\end{document}"]
+    for element in required_elements:
+        if element not in latex:
+            click.secho(f"   [WARN] LaTeX validation failed: missing {element}", fg="yellow")
+            return False
+
+    # Minimum length heuristic
+    if len(latex) < 200:
+        click.secho("   [WARN] LaTeX validation failed: content too short", fg="yellow")
         return False
-    if len(latex) < 200:  # heuristic guardrail
+
+    # Check for malformed titleformat commands (orphaned braces before \begin{document})
+    begin_doc_idx = latex.find("\\begin{document}")
+    preamble = latex[:begin_doc_idx] if begin_doc_idx > 0 else ""
+
+    # Detect orphaned closing braces at line start (common LLM truncation pattern)
+    orphan_brace_pattern = re.compile(r'^\s*\}\s*\{', re.MULTILINE)
+    if orphan_brace_pattern.search(preamble):
+        click.secho("   [WARN] LaTeX validation failed: detected malformed command (orphaned braces in preamble)", fg="yellow")
         return False
+
+    # Check for incomplete titleformat (pattern: }{}{}{ without preceding \titleformat)
+    if re.search(r'\}\s*\{\}\s*\{\}\s*\{', preamble):
+        incomplete_titleformat = not re.search(r'\\titleformat\s*\{', preamble)
+        if incomplete_titleformat:
+            click.secho("   [WARN] LaTeX validation failed: incomplete \\titleformat command", fg="yellow")
+            return False
+
+    # Basic brace balance check in preamble
+    open_braces = preamble.count('{')
+    close_braces = preamble.count('}')
+    if abs(open_braces - close_braces) > 5:  # Allow some tolerance for edge cases
+        click.secho(f"   [WARN] LaTeX validation failed: brace imbalance in preamble ({open_braces} open, {close_braces} close)", fg="yellow")
+        return False
+
     return True
 
 
-def wait_for_pdf_ready(pdf_url: str, wait_seconds: int) -> bool:
-    """Poll for PDF availability with shorter intervals instead of one long sleep."""
-    if not pdf_url:
-        return False
-    
-    deadline = time.time() + wait_seconds
-    interval = max(5, min(30, wait_seconds // 6 or 5))
-    
-    while time.time() < deadline:
-        try:
-            head_resp = request_with_retries(
-                "HEAD",
-                pdf_url,
-                timeout=max(config.REQUEST_TIMEOUT_SECONDS, 60),
-                retries=1
+def compile_latex_to_pdf(latex_content: str, base_filename: str) -> Optional[Tuple[str, bytes]]:
+    """
+    Compile LaTeX content to PDF using pdflatex.
+
+    Args:
+        latex_content: The LaTeX source code
+        base_filename: Base name for the output files (without extension)
+
+    Returns:
+        Tuple of (pdf_path, pdf_bytes) if successful, None if compilation fails
+    """
+    # Create temp directory for compilation
+    temp_dir = tempfile.mkdtemp(prefix='latex_compile_')
+    tex_path = Path(temp_dir) / f"{base_filename}.tex"
+    pdf_path = Path(temp_dir) / f"{base_filename}.pdf"
+    compilation_succeeded = False
+
+    try:
+        # Write LaTeX content to temp file
+        tex_path.write_text(latex_content, encoding='utf-8')
+
+        # Run pdflatex twice (for references/TOC)
+        for pass_num in range(2):
+            result = subprocess.run(
+                ['pdflatex', '-interaction=nonstopmode', '-halt-on-error', tex_path.name],
+                cwd=temp_dir,
+                capture_output=True,
+                timeout=60,
+                text=True
             )
-            if head_resp.status_code < 400:
-                return True
-        except requests.RequestException:
+
+            if result.returncode != 0:
+                # Save failed .tex file and full pdflatex output for debugging
+                failed_dir = Path("tex/failed")
+                failed_dir.mkdir(parents=True, exist_ok=True)
+
+                # Save .tex file
+                failed_tex = failed_dir / f"{base_filename}_FAILED.tex"
+                shutil.copy(tex_path, failed_tex)
+
+                # Save full pdflatex output to log file
+                log_file = failed_dir / f"{base_filename}_pdflatex.log"
+                log_file.write_text(result.stdout, encoding='utf-8')
+
+                print(f"   pdflatex pass {pass_num + 1} failed:")
+                print(f"   Failed .tex saved to: {failed_tex}")
+                print(f"   Full log saved to: {log_file}")
+
+                # Print last 30 lines for immediate context
+                stderr_lines = result.stdout.split('\n')[-30:]
+                for line in stderr_lines:
+                    if line.strip():
+                        print(f"      {line}")
+
+                print(f"   Temp dir preserved for debugging: {temp_dir}")
+                return None
+
+        # Verify PDF was created and is non-empty
+        if not pdf_path.exists() or pdf_path.stat().st_size == 0:
+            # Save failed .tex file for debugging
+            failed_dir = Path("tex/failed")
+            failed_dir.mkdir(parents=True, exist_ok=True)
+            failed_tex = failed_dir / f"{base_filename}_FAILED_NO_PDF.tex"
+            shutil.copy(tex_path, failed_tex)
+
+            print("   PDF file was not created or is empty")
+            print(f"   Failed .tex saved to: {failed_tex}")
+            print(f"   Temp dir preserved for debugging: {temp_dir}")
+            return None
+
+        # Read PDF bytes
+        pdf_bytes = pdf_path.read_bytes()
+        compilation_succeeded = True
+
+        return (str(pdf_path), pdf_bytes)
+
+    except subprocess.TimeoutExpired:
+        # Save failed .tex file for debugging
+        failed_dir = Path("tex/failed")
+        failed_dir.mkdir(parents=True, exist_ok=True)
+        failed_tex = failed_dir / f"{base_filename}_FAILED_TIMEOUT.tex"
+        shutil.copy(tex_path, failed_tex)
+
+        print("   pdflatex compilation timed out (60s)")
+        print(f"   Failed .tex saved to: {failed_tex}")
+        print(f"   Temp dir preserved for debugging: {temp_dir}")
+        return None
+    except Exception as e:
+        # Save failed .tex file for debugging
+        failed_dir = Path("tex/failed")
+        failed_dir.mkdir(parents=True, exist_ok=True)
+        failed_tex = failed_dir / f"{base_filename}_FAILED_EXCEPTION.tex"
+        try:
+            shutil.copy(tex_path, failed_tex)
+            print(f"   Failed .tex saved to: {failed_tex}")
+        except:
             pass
-        time.sleep(interval)
-    
-    return False
+
+        print(f"   LaTeX compilation error: {e}")
+        print(f"   Temp dir preserved for debugging: {temp_dir}")
+        return None
+    finally:
+        # Only clean up temp directory if compilation succeeded
+        if compilation_succeeded:
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception:
+                pass
 
 
 # =============================================================================
@@ -580,17 +845,34 @@ class GoogleSlidesClient:
         self.creds = make_credentials(scopes)
         self.service = build('slides', 'v1', credentials=self.creds)
     
-    def create_job_slide(self, presentation_id: str, job: Dict, resume_pdf_url: str):
-        """Create a slide for a job application"""
-        job_id = job.get('id', str(int(time.time())))
+    def create_job_slide(self, presentation_id: str, job: Dict, resume_pdf_url: str) -> bool:
+        """Create a slide for a job application. Returns True on success, False on failure."""
+        # Use UUID suffix to ensure globally unique object IDs (prevents collision if same job ID)
+        job_id = f"{job.get('id', 'noid')}_{uuid.uuid4().hex[:8]}"
         title = job.get('title', 'Unknown Position')
         company = job.get('companyName', 'Unknown Company')
         location = job.get('location', 'Not specified')
         posted_at = job.get('postedAt', 'Unknown')
-        salary = format_salary_info(job.get('salaryInfo'))
-        job_link = job.get('link', '')
-        apply_url = job.get('applyUrl', 'https://people.tamu.edu/~carlunpen/')
-        
+
+        # Get ATS scores (replaces salary display)
+        ats_scores = job.get('ats_scores', {})
+        ats_score = ats_scores.get('overall_score', 'N/A')
+        ats_recommendation = ats_scores.get('recommendation', 'N/A')
+        ats_display = f"{ats_score}/100 ({ats_recommendation})"
+
+        # Fallback chain for job link to prevent empty URL in hyperlink
+        job_link = job.get('link', '') or job.get('applyUrl', '') or 'https://linkedin.com/jobs'
+        apply_url = job.get('applyUrl', '') or 'https://people.tamu.edu/~carlunpen/'
+
+        # Define right box text and calculate link indices dynamically (prevents hardcoding bugs)
+        right_box_text = 'RESUME\nOpen PDF Resume\n\nLINKEDIN\nView Job Posting\n\nAPPLY\nQuick Apply Link'
+        resume_link_start = right_box_text.find('Open PDF Resume')
+        resume_link_end = resume_link_start + len('Open PDF Resume')
+        job_link_start = right_box_text.find('View Job Posting')
+        job_link_end = job_link_start + len('View Job Posting')
+        apply_link_start = right_box_text.find('Quick Apply Link')
+        apply_link_end = apply_link_start + len('Quick Apply Link')
+
         requests_body = [
             # Create blank slide
             {
@@ -650,7 +932,7 @@ class GoogleSlidesClient:
                 'insertText': {
                     'objectId': f'left_box_{job_id}',
                     'insertionIndex': 0,
-                    'text': f'📍 LOCATION\n{location}\n\n📅 POSTED\n{posted_at}\n\n💰 SALARY\n{salary}'
+                    'text': f'LOCATION\n{location}\n\nPOSTED\n{posted_at}\n\nATS SCORE\n{ats_display}'
                 }
             },
             # Create right info box
@@ -677,7 +959,192 @@ class GoogleSlidesClient:
                 'insertText': {
                     'objectId': f'right_box_{job_id}',
                     'insertionIndex': 0,
-                    'text': 'RESUME\nOpen PDF Resume\n\nLINKEDIN\nView Job Posting\n\nAPPLY\nQuick Apply Link'
+                    'text': right_box_text
+                }
+            },
+            # Add hyperlink to "Open PDF Resume" (dynamically calculated indices)
+            {
+                'updateTextStyle': {
+                    'objectId': f'right_box_{job_id}',
+                    'textRange': {
+                        'type': 'FIXED_RANGE',
+                        'startIndex': resume_link_start,
+                        'endIndex': resume_link_end
+                    },
+                    'style': {
+                        'link': {'url': resume_pdf_url},
+                        'foregroundColor': {
+                            'opaqueColor': {
+                                'rgbColor': {'red': 0.102, 'green': 0.4, 'blue': 0.898}
+                            }
+                        },
+                        'underline': True
+                    },
+                    'fields': 'link,foregroundColor,underline'
+                }
+            },
+            # Add hyperlink to "View Job Posting" (dynamically calculated indices)
+            {
+                'updateTextStyle': {
+                    'objectId': f'right_box_{job_id}',
+                    'textRange': {
+                        'type': 'FIXED_RANGE',
+                        'startIndex': job_link_start,
+                        'endIndex': job_link_end
+                    },
+                    'style': {
+                        'link': {'url': job_link},
+                        'foregroundColor': {
+                            'opaqueColor': {
+                                'rgbColor': {'red': 0.102, 'green': 0.4, 'blue': 0.898}
+                            }
+                        },
+                        'underline': True
+                    },
+                    'fields': 'link,foregroundColor,underline'
+                }
+            },
+            # Add hyperlink to "Quick Apply Link" (dynamically calculated indices)
+            {
+                'updateTextStyle': {
+                    'objectId': f'right_box_{job_id}',
+                    'textRange': {
+                        'type': 'FIXED_RANGE',
+                        'startIndex': apply_link_start,
+                        'endIndex': apply_link_end
+                    },
+                    'style': {
+                        'link': {'url': apply_url},
+                        'foregroundColor': {
+                            'opaqueColor': {
+                                'rgbColor': {'red': 0.102, 'green': 0.4, 'blue': 0.898}
+                            }
+                        },
+                        'underline': True
+                    },
+                    'fields': 'link,foregroundColor,underline'
+                }
+            },
+            # Style title box: 32pt, bold, dark gray, centered
+            {
+                'updateTextStyle': {
+                    'objectId': f'title_box_{job_id}',
+                    'style': {
+                        'fontSize': {'magnitude': 32, 'unit': 'PT'},
+                        'bold': True,
+                        'foregroundColor': {
+                            'opaqueColor': {
+                                'rgbColor': {'red': 0.149, 'green': 0.149, 'blue': 0.149}
+                            }
+                        }
+                    },
+                    'fields': 'fontSize,bold,foregroundColor'
+                }
+            },
+            {
+                'updateParagraphStyle': {
+                    'objectId': f'title_box_{job_id}',
+                    'style': {
+                        'alignment': 'CENTER',
+                        'lineSpacing': 110
+                    },
+                    'fields': 'alignment,lineSpacing'
+                }
+            },
+            # Style left box: 13pt font
+            {
+                'updateTextStyle': {
+                    'objectId': f'left_box_{job_id}',
+                    'style': {
+                        'fontSize': {'magnitude': 13, 'unit': 'PT'}
+                    },
+                    'fields': 'fontSize'
+                }
+            },
+            # Style right box: 13pt font
+            {
+                'updateTextStyle': {
+                    'objectId': f'right_box_{job_id}',
+                    'style': {
+                        'fontSize': {'magnitude': 13, 'unit': 'PT'}
+                    },
+                    'fields': 'fontSize'
+                }
+            },
+            # Left box paragraph spacing
+            {
+                'updateParagraphStyle': {
+                    'objectId': f'left_box_{job_id}',
+                    'style': {
+                        'lineSpacing': 120,
+                        'spaceAbove': {'magnitude': 8, 'unit': 'PT'},
+                        'spaceBelow': {'magnitude': 8, 'unit': 'PT'}
+                    },
+                    'fields': 'lineSpacing,spaceAbove,spaceBelow'
+                }
+            },
+            # Right box paragraph spacing
+            {
+                'updateParagraphStyle': {
+                    'objectId': f'right_box_{job_id}',
+                    'style': {
+                        'lineSpacing': 120,
+                        'spaceAbove': {'magnitude': 8, 'unit': 'PT'},
+                        'spaceBelow': {'magnitude': 8, 'unit': 'PT'}
+                    },
+                    'fields': 'lineSpacing,spaceAbove,spaceBelow'
+                }
+            },
+            # Left box background: light blue with blue border
+            {
+                'updateShapeProperties': {
+                    'objectId': f'left_box_{job_id}',
+                    'shapeProperties': {
+                        'shapeBackgroundFill': {
+                            'solidFill': {
+                                'color': {
+                                    'rgbColor': {'red': 0.949, 'green': 0.969, 'blue': 1.0}
+                                }
+                            }
+                        },
+                        'outline': {
+                            'outlineFill': {
+                                'solidFill': {
+                                    'color': {
+                                        'rgbColor': {'red': 0.698, 'green': 0.8, 'blue': 0.949}
+                                    }
+                                }
+                            },
+                            'weight': {'magnitude': 25400, 'unit': 'EMU'}
+                        }
+                    },
+                    'fields': 'shapeBackgroundFill.solidFill.color,outline'
+                }
+            },
+            # Right box background: light green with green border
+            {
+                'updateShapeProperties': {
+                    'objectId': f'right_box_{job_id}',
+                    'shapeProperties': {
+                        'shapeBackgroundFill': {
+                            'solidFill': {
+                                'color': {
+                                    'rgbColor': {'red': 0.969, 'green': 1.0, 'blue': 0.949}
+                                }
+                            }
+                        },
+                        'outline': {
+                            'outlineFill': {
+                                'solidFill': {
+                                    'color': {
+                                        'rgbColor': {'red': 0.698, 'green': 0.898, 'blue': 0.698}
+                                    }
+                                }
+                            },
+                            'weight': {'magnitude': 25400, 'unit': 'EMU'}
+                        }
+                    },
+                    'fields': 'shapeBackgroundFill.solidFill.color,outline'
                 }
             },
         ]
@@ -687,9 +1154,11 @@ class GoogleSlidesClient:
                 presentationId=presentation_id,
                 body={'requests': requests_body}
             ).execute()
-            print(f"Created slide for {company} - {title}")
+            click.secho(f"   [OK] Created slide for {company} - {title}", fg="green")
+            return True
         except HttpError as e:
-            print(f"Error creating slide: {e}")
+            click.secho(f"   [ERROR] Error creating slide: {e}", fg="red")
+            return False
 
 
 class ApifyClient:
@@ -781,6 +1250,35 @@ class GitHubClient:
             print(f"Error uploading to GitHub: {e}")
             return {}
 
+    def upload_binary_file(self, file_path: str, content_bytes: bytes, message: str) -> Dict:
+        """Upload a binary file (like PDF) to GitHub."""
+        url = f"{self.base_url}/{file_path}"
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Accept": "application/vnd.github.v3+json",
+            "Content-Type": "application/json"
+        }
+
+        # Base64 encode binary content
+        content_b64 = base64.b64encode(content_bytes).decode('utf-8')
+
+        payload = {
+            "message": message,
+            "content": content_b64
+        }
+
+        # Check if file exists and get SHA
+        sha = self.get_file_sha(file_path)
+        if sha:
+            payload["sha"] = sha
+
+        try:
+            response = request_with_retries("PUT", url, headers=headers, json=payload)
+            return response.json()
+        except requests.RequestException as e:
+            print(f"Error uploading binary to GitHub: {e}")
+            return {}
+
 
 class AnyMailFinderClient:
     """Client for finding decision-maker emails"""
@@ -818,7 +1316,7 @@ class JobFilterChain:
     
     def __init__(self):
         self.llm = ChatOpenAI(
-            model="gpt-4.1-mini",
+            model="gpt-4o-mini",
             temperature=0.7,
             api_key=config.OPENAI_API_KEY
         )
@@ -845,38 +1343,853 @@ class JobFilterChain:
             return False
 
 
-class ResumeGeneratorChain:
-    """LangChain chain for generating tailored resumes"""
-    
+# =============================================================================
+# HYBRID RESUME GENERATION SYSTEM (GPT-4o Content + Template LaTeX + ATS Scoring)
+# =============================================================================
+
+class HybridContentGenerator:
+    """
+    Uses GPT-4o to generate tailored resume CONTENT (not LaTeX syntax).
+    Returns structured JSON that will be plugged into templates.
+
+    This is the key insight: GPT-4o is excellent at understanding job requirements
+    and tailoring content, but struggles with LaTeX syntax. We separate concerns:
+    - GPT-4o: Content intelligence (what to say)
+    - Templates: LaTeX formatting (how to say it)
+    """
+
+    CONTENT_GENERATION_PROMPT = """You are an expert resume content generator for internship applications.
+
+Your task: Analyze this job description and the candidate's background, then select and tailor the MOST COMPELLING content for this specific role.
+
+**Critical Rules:**
+1. Return ONLY valid JSON (no markdown, no code fences, no LaTeX, no explanation)
+2. Select the 3-4 MOST RELEVANT bullet points for each experience
+3. REWRITE bullets to incorporate job-specific keywords naturally
+4. Prioritize experiences/projects most relevant to this role
+5. Reorder skills to put job-matching technologies FIRST
+6. Use EXACT terminology from the job description (e.g., if JD says "React.js", use "React.js")
+
+**Job Description:**
+{job_description}
+
+**Candidate Background Data:**
+{resume_data}
+
+**Return JSON in this EXACT structure:**
+{{
+  "experiences": [
+    {{
+      "company": "AIPHRODITE",
+      "title": "Technical Lead \\& Full Stack / ML",
+      "dates": "Sep. 2024 -- Present",
+      "location": "College Station, TX",
+      "bullets": [
+        "First bullet tailored to this job with relevant keywords...",
+        "Second bullet highlighting relevant skills...",
+        "Third bullet with quantified achievements..."
+      ]
+    }},
+    {{
+      "company": "applyeasy.tech",
+      "title": "Founder \\& Full-Stack Developer",
+      "dates": "January 2024 -- Present",
+      "location": "College Station, TX",
+      "bullets": [
+        "First bullet...",
+        "Second bullet...",
+        "Third bullet..."
+      ]
+    }}
+  ],
+  "projects": [
+    {{
+      "name": "carlosOS -- Custom Unix Shell",
+      "tech": "C, Linux, Systems Programming",
+      "dates": "October 2024",
+      "bullets": [
+        "First bullet...",
+        "Second bullet..."
+      ]
+    }},
+    {{
+      "name": "Project Name",
+      "tech": "Tech Stack",
+      "dates": "Date",
+      "bullets": ["..."]
+    }},
+    {{
+      "name": "Project Name",
+      "tech": "Tech Stack",
+      "dates": "Date",
+      "bullets": ["..."]
+    }}
+  ],
+  "skills": {{
+    "Languages": ["Python", "TypeScript", "JavaScript", "C/C++", "Java", "SQL"],
+    "Frameworks": ["React", "Next.js", "FastAPI", "Node.js", "LangChain"],
+    "Databases \\& Tools": ["PostgreSQL", "Docker", "Git", "GitHub Actions", "Linux"]
+  }},
+  "education_bullets": [
+    "Relevant Coursework: Software Engineering, Algorithms, Operating Systems, AI",
+    "Dean's List or other relevant achievement"
+  ]
+}}
+
+**IMPORTANT:**
+- Include EXACTLY 2 experiences (AIPHRODITE and applyeasy.tech)
+- Include EXACTLY 3 projects (choose the 3 most relevant)
+- Include 3-4 bullets per experience, 2 bullets per project
+- Escape special characters: & becomes \\&, % becomes \\%
+- Use -- for date ranges (not -)
+- Return ONLY the JSON object, nothing else"""
+
     def __init__(self):
-        self.llm = ChatOpenAI(
-            model="gpt-4o",
-            temperature=1.0,
-            max_tokens=4000,
-            api_key=config.OPENAI_API_KEY
-        )
-        
-        self.prompt = ChatPromptTemplate.from_messages([
-            SystemMessagePromptTemplate.from_template(RESUME_SYSTEM_PROMPT),
-            HumanMessagePromptTemplate.from_template(RESUME_USER_PROMPT)
-        ])
-        
-        self.chain = self.prompt | self.llm | StrOutputParser()
-    
-    def generate_resume(self, job: Dict, resume_template: str) -> str:
-        """Generate a tailored LaTeX resume"""
+        try:
+            self.llm = ChatOpenAI(
+                model="gpt-4o",
+                temperature=0.7,  # Creative but controlled
+                max_tokens=3000,
+                api_key=config.OPENAI_API_KEY
+            )
+            self.prompt = ChatPromptTemplate.from_template(self.CONTENT_GENERATION_PROMPT)
+            self.chain = self.prompt | self.llm | JsonOutputParser()
+            print("   [INFO] HybridContentGenerator initialized (using gpt-4o)")
+        except Exception as e:
+            click.secho(f"   [WARN] HybridContentGenerator initialization failed: {e}", fg="yellow")
+            raise
+
+    def generate_content(self, job: Dict, resume_data: str) -> Dict:
+        """
+        Generate tailored content selections for this job.
+
+        Args:
+            job: Job description dict from LinkedIn
+            resume_data: Raw resume helper text with all background data
+
+        Returns:
+            JSON dict with experiences, projects, skills, education_bullets
+        """
         try:
             job_description = json.dumps(job, indent=2)
-            raw_latex = self.chain.invoke({
+            content = self.chain.invoke({
                 "job_description": job_description,
-                "resume_template": resume_template
+                "resume_data": resume_data
             })
-            latex = clean_latex(raw_latex)
-            if not latex or "\\documentclass" not in latex:
-                raise ValueError("LLM returned invalid LaTeX")
-            return latex
+
+            # Validate required keys
+            required_keys = ["experiences", "projects", "skills", "education_bullets"]
+            for key in required_keys:
+                if key not in content:
+                    raise ValueError(f"Missing required key in GPT-4o response: {key}")
+
+            # Log what was generated
+            num_exp = len(content.get("experiences", []))
+            num_proj = len(content.get("projects", []))
+            click.secho(f"   [OK] Generated tailored content: {num_exp} experiences, {num_proj} projects", fg="green")
+
+            return content
+
         except Exception as e:
-            print(f"Error generating resume: {e}")
+            click.secho(f"   [ERROR] Content generation failed: {e}", fg="red")
+            raise  # Fail fast - don't submit bad resumes
+
+
+class ATSScorer:
+    """
+    Scores resumes against job descriptions using keyword matching and heuristics.
+    Provides objective quality metrics before submission.
+    """
+
+    def __init__(self):
+        self.initialized = True
+        print("   [INFO] ATSScorer initialized")
+
+    def score_resume(self, resume_text: str, job_description: str) -> Dict:
+        """
+        Score resume against job description.
+
+        Returns:
+            {
+                "overall_score": 78,           # 0-100
+                "keyword_match_pct": 65.5,     # percentage
+                "missing_keywords": ["Docker", "Kubernetes"],
+                "matched_keywords": ["Python", "React", "TypeScript"],
+                "recommendation": "GOOD",      # STRONG/GOOD/FAIR/WEAK
+                "should_submit": True          # Based on threshold
+            }
+        """
+        if not resume_text or not job_description:
+            return {
+                "overall_score": 0,
+                "keyword_match_pct": 0,
+                "missing_keywords": [],
+                "matched_keywords": [],
+                "recommendation": "UNKNOWN",
+                "should_submit": True  # Don't block if no text
+            }
+
+        try:
+            # Extract keywords from job description
+            job_keywords = self._extract_keywords(job_description)
+
+            # Check which keywords appear in resume
+            resume_lower = resume_text.lower()
+            matched = []
+            missing = []
+
+            for keyword in job_keywords:
+                if keyword.lower() in resume_lower:
+                    matched.append(keyword)
+                else:
+                    missing.append(keyword)
+
+            # Calculate scores
+            if len(job_keywords) > 0:
+                keyword_match_pct = (len(matched) / len(job_keywords)) * 100
+            else:
+                keyword_match_pct = 100
+
+            # Overall score is weighted
+            # 70% keyword match, 30% format/length heuristics
+            format_score = self._score_format(resume_text)
+            overall_score = int(0.7 * keyword_match_pct + 0.3 * format_score)
+
+            recommendation = self._get_recommendation(overall_score)
+            should_submit = overall_score >= 60
+
+            return {
+                "overall_score": overall_score,
+                "keyword_match_pct": round(keyword_match_pct, 1),
+                "missing_keywords": missing[:10],  # Top 10 missing
+                "matched_keywords": matched,
+                "recommendation": recommendation,
+                "should_submit": should_submit
+            }
+
+        except Exception as e:
+            click.secho(f"   [WARN] ATS scoring failed: {e}", fg="yellow")
+            return {
+                "overall_score": 0,
+                "keyword_match_pct": 0,
+                "missing_keywords": [],
+                "matched_keywords": [],
+                "recommendation": "ERROR",
+                "should_submit": True  # Don't block on error
+            }
+
+    def _extract_keywords(self, job_description: str) -> List[str]:
+        """Extract important keywords from job description."""
+        # Common technical keywords to look for
+        tech_keywords = [
+            # Languages
+            "python", "javascript", "typescript", "java", "c++", "c#", "go", "rust",
+            "sql", "html", "css", "bash", "shell",
+            # Frameworks
+            "react", "react.js", "next.js", "nextjs", "node.js", "nodejs", "express",
+            "fastapi", "django", "flask", "spring", "angular", "vue", "svelte",
+            "tailwind", "tailwindcss",
+            # Databases
+            "postgresql", "postgres", "mysql", "mongodb", "redis", "sqlite",
+            "dynamodb", "cassandra", "elasticsearch",
+            # Tools/Platforms
+            "docker", "kubernetes", "k8s", "aws", "azure", "gcp", "linux", "git",
+            "github", "gitlab", "jenkins", "ci/cd", "terraform", "ansible",
+            # AI/ML
+            "machine learning", "ml", "ai", "deep learning", "pytorch", "tensorflow",
+            "langchain", "openai", "llm", "nlp", "computer vision",
+            # Concepts
+            "rest", "restful", "api", "microservices", "agile", "scrum",
+            "tdd", "testing", "unit test", "integration test"
+        ]
+
+        job_lower = job_description.lower()
+        found_keywords = []
+
+        for keyword in tech_keywords:
+            if keyword in job_lower:
+                found_keywords.append(keyword)
+
+        return found_keywords
+
+    def _score_format(self, resume_text: str) -> int:
+        """Score resume format/structure (0-100)."""
+        score = 100
+
+        # Penalize if too short
+        if len(resume_text) < 500:
+            score -= 30
+        elif len(resume_text) < 1000:
+            score -= 15
+
+        # Penalize if too long (multi-page)
+        if len(resume_text) > 5000:
+            score -= 20
+
+        # Check for key sections (case-insensitive)
+        text_lower = resume_text.lower()
+        if "education" not in text_lower:
+            score -= 10
+        if "experience" not in text_lower:
+            score -= 15
+        if "skills" not in text_lower:
+            score -= 10
+
+        return max(0, min(100, score))
+
+    def _get_recommendation(self, score: int) -> str:
+        """Convert score to recommendation level."""
+        if score >= 80:
+            return "STRONG"
+        elif score >= 70:
+            return "GOOD"
+        elif score >= 60:
+            return "FAIR"
+        else:
+            return "WEAK"
+
+
+class ResumeDataLoader:
+    """Parses resume_helper_fixed.txt and extracts structured resume data."""
+
+    def __init__(self, helper_file: str = "resume_helper_fixed.txt"):
+        try:
+            file_path = Path(helper_file)
+            if not file_path.exists():
+                raise FileNotFoundError(f"Resume template file not found: {helper_file}")
+
+            self.raw_content = file_path.read_text(encoding='utf-8')
+            print(f"   [INFO] Loaded resume template ({len(self.raw_content)} chars)")
+
+            # Extract all sections
+            self.preamble = self._extract_preamble()
+            self.contact_info = self._extract_contact()
+            self.education = self._extract_education()
+            self.experience = self._extract_experience()
+            self.projects = self._extract_projects()
+            self.skills = self._extract_skills()
+
+            click.secho(f"   [OK] Parsed: preamble, contact, education, {len(self.experience)} experiences, {len(self.projects)} projects", fg="green")
+
+        except Exception as e:
+            click.secho(f"   [ERROR] ResumeDataLoader initialization failed: {e}", fg="red")
+            raise
+
+    def _extract_preamble(self) -> str:
+        """Extract LaTeX preamble between markers."""
+        try:
+            start_marker = "<<< BEGIN JG-PREAMBLE"
+            end_marker = "<<< END JG-PREAMBLE"
+
+            start_idx = self.raw_content.find(start_marker)
+            end_idx = self.raw_content.find(end_marker)
+
+            if start_idx == -1 or end_idx == -1:
+                raise ValueError(f"Preamble markers not found (start: {start_idx}, end: {end_idx})")
+
+            # Extract content between markers (skip the marker lines themselves)
+            start_idx = self.raw_content.find('\n', start_idx) + 1
+            preamble = self.raw_content[start_idx:end_idx].strip()
+
+            if "\\documentclass" not in preamble:
+                raise ValueError("Preamble missing \\documentclass command")
+
+            return preamble
+
+        except Exception as e:
+            click.secho(f"   [ERROR] Failed to extract preamble: {e}", fg="red")
+            raise
+
+    def _extract_contact(self) -> Dict:
+        """Extract contact information (hardcoded for now, can be made dynamic)."""
+        return {
+            "name": "Carlos Luna-Peña",
+            "branding": "Computer Science @ Texas A\\&M University",
+            "email": "carlunpen@tamu.edu",
+            "phone": "(956) 867-1776",
+            "github": "github.com/clmoon2",
+            "github_url": "https://github.com/clmoon2",
+            "linkedin": "linkedin.com/in/carlunpen",
+            "linkedin_url": "https://linkedin.com/in/carlunpen",
+            "portfolio": "applyeasy.tech",
+            "portfolio_url": "https://applyeasy.tech"
+        }
+
+    def _extract_education(self) -> Dict:
+        """Extract education information."""
+        return {
+            "institution": "Texas A\\&M University",
+            "location": "College Station, TX",
+            "degree": "Bachelor of Science in Computer Science",
+            "gpa": "3.8/4.0",
+            "graduation": "May 2026",
+            "bullets": [
+                "Relevant Coursework: Data Structures \\& Algorithms, Computer Architecture, Database Systems, Operating Systems",
+                "Dean's List: Fall 2023, Spring 2024"
+            ]
+        }
+
+    def _extract_experience(self) -> List[Dict]:
+        """Extract work experience with bullet variants."""
+        # Hardcoded for now - could be made dynamic by parsing resume_helper_fixed.txt
+        return [
+            {
+                "company": "AIPHRODITE",
+                "title": "Software Engineer Intern",
+                "dates": "June 2024 -- August 2024",
+                "location": "Remote",
+                "bullets": [
+                    "Built full-stack web application using React, Node.js, and PostgreSQL to automate image tagging, reducing manual work by 75\\%",
+                    "Engineered PyTorch-based image classification pipeline achieving 87\\% accuracy on 500+ product images",
+                    "Designed and implemented RESTful API with FastAPI serving 10K+ daily requests with <200ms latency",
+                    "Integrated OAuth 2.0 authentication and JWT-based session management for secure user access",
+                    "Optimized PostgreSQL queries and added database indexing, improving query performance by 40\\%",
+                    "Deployed containerized application using Docker and implemented CI/CD pipeline with GitHub Actions"
+                ]
+            },
+            {
+                "company": "applyeasy.tech",
+                "title": "Founder \\& Full-Stack Developer",
+                "dates": "January 2024 -- Present",
+                "location": "College Station, TX",
+                "bullets": [
+                    "Developed AI-powered job application platform using Next.js, React, and Tailwind CSS with 500+ active users",
+                    "Architected PostgreSQL database schema with optimized indexing for fast querying of 50K+ job postings",
+                    "Implemented LangChain and OpenAI API integration for automated resume generation and keyword matching",
+                    "Built secure authentication system using OAuth 2.0 with Google Sign-In and encrypted session cookies",
+                    "Integrated Google APIs (Sheets, Slides, Gmail) for automated workflow orchestration and tracking",
+                    "Designed responsive UI with React and Tailwind following mobile-first principles"
+                ]
+            }
+        ]
+
+    def _extract_projects(self) -> List[Dict]:
+        """Extract project entries."""
+        return [
+            {
+                "name": "carlosOS -- Custom Unix Shell",
+                "tech": "C, Linux, Systems Programming",
+                "dates": "October 2024",
+                "bullets": [
+                    "Implemented Unix shell in C with support for piping, I/O redirection, and background processes",
+                    "Utilized fork/execvp for process creation and waitpid for job control and status tracking",
+                    "Handled signals (SIGINT, SIGTSTP) for proper interrupt and suspension of foreground processes"
+                ]
+            },
+            {
+                "name": "Aggie Events -- Campus Event Discovery Platform",
+                "tech": "React, Node.js, Express, PostgreSQL, REST API",
+                "dates": "September 2024",
+                "bullets": [
+                    "Built full-stack event discovery platform with React frontend and Node.js/Express backend",
+                    "Designed PostgreSQL schema with normalized tables for events, organizations, and user preferences",
+                    "Implemented RESTful API with endpoints for CRUD operations, filtering, and search functionality",
+                    "Created responsive UI with real-time search and category filtering using React hooks"
+                ]
+            },
+            {
+                "name": "ApplyEasy Engine -- Job Application Automation",
+                "tech": "Python, LangChain, OpenAI API, LaTeX, Google APIs",
+                "dates": "December 2024",
+                "bullets": [
+                    "Engineered automated job application pipeline using Python, LangChain, and OpenAI API",
+                    "Integrated LinkedIn job scraping via Apify and AI-powered resume tailoring with GPT-4",
+                    "Automated LaTeX resume compilation and PDF generation with local pdflatex subprocess",
+                    "Orchestrated workflow with Google Sheets, Slides, and GitHub APIs for tracking and storage"
+                ]
+            }
+        ]
+
+    def _extract_skills(self) -> Dict[str, List[str]]:
+        """Extract technical skills categorized."""
+        return {
+            "Languages": ["TypeScript", "JavaScript", "Python", "Java", "C", "C++", "SQL", "Bash", "LaTeX"],
+            "Web \\& Frameworks": ["React", "Next.js", "Node.js", "Express", "FastAPI", "Tailwind CSS", "HTML/CSS"],
+            "Databases \\& Tools": ["PostgreSQL", "SQLite", "Git", "GitHub", "Docker", "Linux", "REST APIs"],
+            "AI \\& Libraries": ["LangChain", "OpenAI API", "PyTorch", "NumPy", "Pandas"],
+            "Other": ["OAuth 2.0", "JWT", "CI/CD", "GitHub Actions", "Agile", "TDD"]
+        }
+
+
+class ContentSelector:
+    """Selects the most relevant resume content based on job keywords."""
+
+    def __init__(self, resume_data: ResumeDataLoader):
+        self.data = resume_data
+
+    def select_experience_bullets(
+        self,
+        experience: Dict,
+        keywords: Dict[str, List[str]],
+        max_bullets: int = 4
+    ) -> List[str]:
+        """
+        Select top N bullets that best match job keywords.
+
+        Algorithm: Score each bullet by counting keyword matches, return top N.
+        """
+        try:
+            # Flatten all keywords into a set for matching
+            all_keywords = set()
+            for category, kw_list in keywords.items():
+                all_keywords.update([kw.lower() for kw in kw_list])
+
+            if not all_keywords:
+                # No keywords extracted - return first N bullets
+                bullets = experience.get("bullets", [])
+                return bullets[:max_bullets]
+
+            # Score each bullet by keyword match count
+            bullet_scores = []
+            for bullet in experience.get("bullets", []):
+                bullet_lower = bullet.lower()
+                score = sum(1 for kw in all_keywords if kw in bullet_lower)
+                bullet_scores.append((score, bullet))
+
+            # Sort by score descending, take top N
+            bullet_scores.sort(reverse=True, key=lambda x: x[0])
+            selected = [bullet for score, bullet in bullet_scores[:max_bullets]]
+
+            # Ensure we have at least some bullets (fallback to first N if scoring failed)
+            if not selected and experience.get("bullets"):
+                selected = experience["bullets"][:max_bullets]
+
+            return selected
+
+        except Exception as e:
+            click.secho(f"   [WARN] Error selecting bullets: {e}, using first {max_bullets}", fg="yellow")
+            return experience.get("bullets", [])[:max_bullets]
+
+    def select_projects(
+        self,
+        projects: List[Dict],
+        keywords: Dict[str, List[str]],
+        max_projects: int = 3
+    ) -> List[Dict]:
+        """
+        Select top N projects that best match keywords.
+        """
+        try:
+            # Flatten keywords
+            all_keywords = set()
+            for category, kw_list in keywords.items():
+                all_keywords.update([kw.lower() for kw in kw_list])
+
+            if not all_keywords or not projects:
+                return projects[:max_projects]
+
+            # Score each project (combine tech stack + bullets for scoring)
+            project_scores = []
+            for project in projects:
+                score = 0
+                # Score tech stack
+                tech = project.get("tech", "").lower()
+                score += sum(1 for kw in all_keywords if kw in tech)
+
+                # Score bullets
+                for bullet in project.get("bullets", []):
+                    bullet_lower = bullet.lower()
+                    score += sum(1 for kw in all_keywords if kw in bullet_lower)
+
+                project_scores.append((score, project))
+
+            # Sort and select top N
+            project_scores.sort(reverse=True, key=lambda x: x[0])
+            return [proj for score, proj in project_scores[:max_projects]]
+
+        except Exception as e:
+            click.secho(f"   [WARN] Error selecting projects: {e}, using first {max_projects}", fg="yellow")
+            return projects[:max_projects]
+
+    def reorder_skills(
+        self,
+        skills: Dict[str, List[str]],
+        keywords: Dict[str, List[str]]
+    ) -> Dict[str, List[str]]:
+        """
+        Reorder skills within each category by relevance to job keywords.
+        """
+        try:
+            # Flatten job keywords
+            all_keywords = set()
+            for category, kw_list in keywords.items():
+                all_keywords.update([kw.lower() for kw in kw_list])
+
+            if not all_keywords:
+                return skills  # No reordering needed
+
+            reordered = {}
+            for category, skill_list in skills.items():
+                # Score each skill by keyword match
+                skill_scores = []
+                for skill in skill_list:
+                    skill_lower = skill.lower()
+                    # Check if any keyword matches this skill
+                    score = 1 if any(kw in skill_lower for kw in all_keywords) else 0
+                    skill_scores.append((score, skill))
+
+                # Sort by score descending (matched skills first), keep original order for ties
+                skill_scores.sort(key=lambda x: (-x[0], skill_list.index(x[1])))
+                reordered[category] = [skill for score, skill in skill_scores]
+
+            return reordered
+
+        except Exception as e:
+            click.secho(f"   [WARN] Error reordering skills: {e}, using original order", fg="yellow")
+            return skills
+
+
+class LaTeXBuilder:
+    """Builds complete LaTeX resume from components with proper escaping."""
+
+    @staticmethod
+    def escape_latex(text: str) -> str:
+        """Escape LaTeX special characters (except already-escaped sequences)."""
+        if not text:
+            return ""
+        # Don't double-escape already-escaped characters
+        # Only escape raw special characters: & % $ # _ { } ~ ^
+        replacements = {
+            '&': r'\&',
+            '%': r'\%',
+            '$': r'\$',
+            '#': r'\#',
+            '_': r'\_',
+        }
+        result = text
+        for char, escaped in replacements.items():
+            # Only replace if not already escaped
+            result = re.sub(f'(?<!\\\\){re.escape(char)}', escaped, result)
+        return result
+
+    def build_resume(
+        self,
+        preamble: str,
+        contact: Dict,
+        education: Dict,
+        experience: List[Dict],
+        projects: List[Dict],
+        skills: Dict[str, List[str]]
+    ) -> str:
+        """Assemble complete LaTeX document."""
+        try:
+            parts = [
+                preamble,
+                "\\begin{document}",
+                self._format_heading(contact),
+                self._format_education(education),
+                self._format_experience(experience),
+                self._format_projects(projects),
+                self._format_skills(skills),
+                "\\end{document}"
+            ]
+
+            latex = "\n\n".join(parts)
+
+            # Validate brace balance
+            open_count = latex.count('{')
+            close_count = latex.count('}')
+            if abs(open_count - close_count) > 5:
+                click.secho(f"   [WARN] Brace imbalance detected ({open_count} open, {close_count} close)", fg="yellow")
+
+            return latex
+
+        except Exception as e:
+            click.secho(f"   [ERROR] Failed to build LaTeX: {e}", fg="red")
+            raise
+
+    def _format_heading(self, contact: Dict) -> str:
+        """Generate centered heading with contact info."""
+        name = contact.get("name", "")
+        branding = contact.get("branding", "")
+        email = contact.get("email", "")
+        github = contact.get("github", "")
+        github_url = contact.get("github_url", "")
+        linkedin = contact.get("linkedin", "")
+        linkedin_url = contact.get("linkedin_url", "")
+
+        return f"""\\begin{{center}}
+    \\textbf{{\\Huge \\scshape {name}}} \\\\ \\vspace{{1pt}}
+    \\small {branding} \\\\ \\vspace{{1pt}}
+    \\small {email} $|$
+    \\href{{{github_url}}}{{{github}}} $|$
+    \\href{{{linkedin_url}}}{{{linkedin}}}
+\\end{{center}}"""
+
+    def _format_education(self, education: Dict) -> str:
+        """Generate Education section."""
+        inst = education.get("institution", "")
+        loc = education.get("location", "")
+        degree = education.get("degree", "")
+        gpa = education.get("gpa", "")
+        grad = education.get("graduation", "")
+        bullets = education.get("bullets", [])
+
+        bullet_items = "\n        ".join([f"\\resumeItem{{{b}}}" for b in bullets])
+
+        return f"""\\section{{Education}}
+  \\resumeSubHeadingListStart
+    \\resumeSubheading
+      {{{inst}}}{{{loc}}}
+      {{{degree}; GPA: {gpa}}}{{{grad}}}
+      \\resumeItemListStart
+        {bullet_items}
+      \\resumeItemListEnd
+  \\resumeSubHeadingListEnd"""
+
+    def _format_experience(self, experiences: List[Dict]) -> str:
+        """Generate Experience section with selected bullets."""
+        exp_entries = []
+        for exp in experiences:
+            company = exp.get("company", "")
+            title = exp.get("title", "")
+            dates = exp.get("dates", "")
+            location = exp.get("location", "")
+            bullets = exp.get("bullets", [])
+
+            bullet_items = "\n        ".join([f"\\resumeItem{{{b}}}" for b in bullets])
+
+            entry = f"""    \\resumeSubheading
+      {{{company}}}{{{location}}}
+      {{{title}}}{{{dates}}}
+      \\resumeItemListStart
+        {bullet_items}
+      \\resumeItemListEnd"""
+            exp_entries.append(entry)
+
+        return f"""\\section{{Experience}}
+  \\resumeSubHeadingListStart
+{chr(10).join(exp_entries)}
+  \\resumeSubHeadingListEnd"""
+
+    def _format_projects(self, projects: List[Dict]) -> str:
+        """Generate Projects section."""
+        proj_entries = []
+        for proj in projects:
+            name = proj.get("name", "")
+            tech = proj.get("tech", "")
+            dates = proj.get("dates", "")
+            bullets = proj.get("bullets", [])
+
+            bullet_items = "\n        ".join([f"\\resumeItem{{{b}}}" for b in bullets])
+
+            entry = f"""    \\resumeProjectHeading
+      {{\\textbf{{{name}}} $|$ \\emph{{{tech}}}}}{{{dates}}}
+      \\resumeItemListStart
+        {bullet_items}
+      \\resumeItemListEnd"""
+            proj_entries.append(entry)
+
+        return f"""\\section{{Projects}}
+  \\resumeSubHeadingListStart
+{chr(10).join(proj_entries)}
+  \\resumeSubHeadingListEnd"""
+
+    def _format_skills(self, skills: Dict[str, List[str]]) -> str:
+        """Generate Technical Skills section."""
+        skill_lines = []
+        for category, skill_list in skills.items():
+            skills_str = ", ".join(skill_list)
+            skill_lines.append(f"\\textbf{{{category}}}{{: {skills_str}}} \\\\")
+
+        # Remove trailing \\ from last line
+        if skill_lines:
+            skill_lines[-1] = skill_lines[-1].rstrip(" \\")
+
+        skills_content = "\n             ".join(skill_lines)
+
+        return f"""\\section{{Technical Skills}}
+ \\begin{{itemize}}[leftmargin=0.15in, label={{}}]
+    \\small{{\\item{{
+     {skills_content}
+    }}}}
+ \\end{{itemize}}"""
+
+
+class HybridResumeGenerator:
+    """
+    Hybrid resume generator: GPT-4o for content, templates for LaTeX.
+
+    This approach combines the best of both worlds:
+    - GPT-4o: Excellent at understanding job requirements and tailoring content
+    - Templates: 100% reliable LaTeX structure (no more orphaned braces!)
+
+    The key insight: GPT-4o generated "absolutely flawless" resume for TikTok
+    that got an online assessment. We keep that content quality while fixing
+    the LaTeX formatting issues.
+    """
+
+    def __init__(self):
+        try:
+            print("   [INFO] Initializing HybridResumeGenerator...")
+
+            # Load resume data for the prompt (background info for GPT-4o)
+            self.data_loader = ResumeDataLoader("resume_helper_fixed.txt")
+
+            # Initialize content generator (GPT-4o)
+            self.content_generator = HybridContentGenerator()
+
+            # Initialize LaTeX builder (template-based)
+            self.latex_builder = LaTeXBuilder()
+
+            click.secho("   [OK] HybridResumeGenerator ready (GPT-4o content + template LaTeX)", fg="green")
+
+        except Exception as e:
+            click.secho(f"   [ERROR] HybridResumeGenerator initialization failed: {e}", fg="red")
+            raise
+
+    def generate_resume(self, job: Dict) -> str:
+        """
+        Generate a tailored LaTeX resume for a specific job.
+
+        Process:
+        1. GPT-4o analyzes job and generates tailored content (JSON)
+        2. Template assembles content into valid LaTeX
+
+        Args:
+            job: Job description dict from LinkedIn (via Apify)
+
+        Returns:
+            Complete LaTeX document string
+        """
+        try:
+            # Step 1: Generate tailored content with GPT-4o
+            print("   [INFO] Generating tailored content with GPT-4o...")
+            content = self.content_generator.generate_content(
+                job,
+                self.data_loader.raw_content  # Pass full background data
+            )
+
+            # Step 2: Build LaTeX from content using templates
+            print("   [INFO] Assembling LaTeX from template...")
+
+            # Format education (static info + GPT-4o bullets)
+            education = {
+                "institution": self.data_loader.education.get("institution", "Texas A\\&M University"),
+                "location": self.data_loader.education.get("location", "College Station, TX"),
+                "degree": self.data_loader.education.get("degree", "Bachelor of Science in Computer Science"),
+                "gpa": self.data_loader.education.get("gpa", "3.8/4.0"),
+                "graduation": self.data_loader.education.get("graduation", "May 2026"),
+                "bullets": content.get("education_bullets", self.data_loader.education.get("bullets", []))
+            }
+
+            # Use GPT-4o generated content for experiences, projects, skills
+            latex = self.latex_builder.build_resume(
+                preamble=self.data_loader.preamble,
+                contact=self.data_loader.contact_info,
+                education=education,
+                experience=content.get("experiences", []),
+                projects=content.get("projects", []),
+                skills=content.get("skills", {})
+            )
+
+            click.secho(f"   [OK] Generated {len(latex)} chars of LaTeX (hybrid approach)", fg="green")
+            return latex
+
+        except Exception as e:
+            click.secho(f"   [ERROR] Resume generation failed: {e}", fg="red")
+            import traceback
+            traceback.print_exc()
             return ""
 
 
@@ -889,7 +2202,24 @@ class JobApplicationPipeline:
     
     def __init__(self):
         validate_required_config()
-        
+
+        # Check pdflatex is available and packages are installed
+        print("[INFO] Verifying LaTeX installation...")
+        pdflatex_ok, pdflatex_error = check_pdflatex_installed()
+        if not pdflatex_ok:
+            raise RuntimeError(
+                f"LaTeX check failed: {pdflatex_error}\n\n"
+                "Please install texlive with required packages:\n"
+                "  Ubuntu/Debian: sudo apt-get install texlive-latex-base texlive-fonts-recommended texlive-latex-extra\n"
+                "  macOS: brew install --cask mactex-no-gui\n"
+                "  Windows: Install MiKTeX from https://miktex.org/"
+            )
+        click.secho("   [OK] LaTeX installation verified", fg="green")
+
+        # Create local tex directory for storing .tex files
+        self.tex_dir = Path("tex")
+        self.tex_dir.mkdir(exist_ok=True)
+
         # Initialize clients
         self.sheets_client = GoogleSheetsClient()
         self.docs_client = GoogleDocsClient()
@@ -900,15 +2230,16 @@ class JobApplicationPipeline:
         
         # Initialize LangChain components
         self.job_filter = JobFilterChain()
-        self.resume_generator = ResumeGeneratorChain()
-        
+        self.resume_generator = HybridResumeGenerator()
+        self.ats_scorer = ATSScorer()
+
         # State
         self.applied_job_ids: set = set()
-        self.resume_template: str = ""
+        self.resume_template: str = ""  # Kept for compatibility, not used anymore
     
     def load_applied_jobs(self) -> None:
         """Load already-applied job IDs from Google Sheets"""
-        print("📋 Loading already-applied jobs...")
+        print("[INFO] Loading already-applied jobs...")
         rows = self.sheets_client.read_sheet(config.GOOGLE_SHEETS_ID)
         self.applied_job_ids = set()
         for row in rows:
@@ -918,30 +2249,26 @@ class JobApplicationPipeline:
         print(f"   Found {len(self.applied_job_ids)} previously applied jobs")
     
     def load_resume_template(self) -> None:
-        """Load resume template from Google Docs"""
-        print("📄 Loading resume template...")
-        attempts = 3
-        self.resume_template = ""
-        for attempt in range(1, attempts + 1):
-            self.resume_template = self.docs_client.get_document_content(config.GOOGLE_DOCS_ID)
-            if self.resume_template:
-                break
-            print(f"   Attempt {attempt}/{attempts} returned empty template; retrying...")
-            time.sleep(1)
-        if not self.resume_template:
-            raise ValueError("Failed to load resume template from Google Docs; aborting pipeline.")
-        print(f"   Template loaded ({len(self.resume_template)} characters)")
+        """Verify resume template file exists (loaded by HybridResumeGenerator)"""
+        print("[INFO] Verifying resume template...")
+        template_path = Path("resume_helper_fixed.txt")
+        if not template_path.exists():
+            raise ValueError(f"Resume template not found: {template_path}")
+        click.secho(f"   [OK] Template file verified: {template_path}", fg="green")
     
     def scrape_jobs(self) -> List[Dict]:
         """Scrape jobs from LinkedIn via Apify"""
-        print("🔍 Scraping LinkedIn jobs...")
+        print("[INFO] Scraping LinkedIn jobs...")
         jobs = self.apify_client.scrape_linkedin_jobs(config.LINKEDIN_SEARCH_URL)
-        print(f"   Found {len(jobs)} jobs")
+        if not jobs:
+            click.secho("   [WARN] No jobs returned from Apify. Check search URL or API status.", fg="yellow")
+        else:
+            print(f"   Found {len(jobs)} jobs")
         return jobs
     
     def filter_duplicates(self, jobs: List[Dict]) -> List[Dict]:
         """Filter out already-applied jobs"""
-        print("🔄 Filtering duplicates...")
+        print("[INFO] Filtering duplicates...")
         new_jobs = []
         seen_in_run = set()
         for j in jobs:
@@ -956,7 +2283,7 @@ class JobApplicationPipeline:
     
     def filter_by_fit(self, jobs: List[Dict]) -> List[Dict]:
         """Filter jobs using AI to check fit"""
-        print("🤖 AI-filtering jobs for fit...")
+        print("[INFO] AI-filtering jobs for fit...")
         matching_jobs = []
         
         for i, job in enumerate(jobs):
@@ -968,11 +2295,11 @@ class JobApplicationPipeline:
                 job['companyDomain'] = domain
                 matching_jobs.append(job)
                 if domain:
-                    print(f"   ✅ [{i+1}/{len(jobs)}] {company} - {title}")
+                    click.secho(f"   [OK] [{i+1}/{len(jobs)}] {company} - {title}", fg="green")
                 else:
-                    print(f"   ⚠️ [{i+1}/{len(jobs)}] {company} - {title} (no domain; email lookup may be skipped)")
+                    click.secho(f"   [WARN] [{i+1}/{len(jobs)}] {company} - {title} (no domain; email lookup may be skipped)", fg="yellow")
             else:
-                print(f"   ❌ [{i+1}/{len(jobs)}] {company} - {title}")
+                click.secho(f"   [SKIP] [{i+1}/{len(jobs)}] {company} - {title}", fg="red")
         
         print(f"   {len(matching_jobs)} jobs passed AI filter")
         return matching_jobs
@@ -988,81 +2315,143 @@ class JobApplicationPipeline:
         print(f"Processing: {company} - {title}")
         print('='*60)
         
-        # 1. Generate resume
-        print("   📝 Generating tailored resume...")
-        latex = self.resume_generator.generate_resume(job, self.resume_template)
+        # 1. Generate resume (template-based with keyword extraction)
+        print("   [INFO] Generating tailored resume...")
+        latex = self.resume_generator.generate_resume(job)
         if not latex or not validate_latex_output(latex):
-            print("   ❌ Failed to generate resume")
+            click.secho("   [ERROR] Failed to generate resume", fg="red")
             return None
         
-        # 2. Upload to GitHub
-        print("   📤 Uploading to GitHub...")
-        file_path = generate_file_path(company, title, posted_at)
-        commit_message = f"Add resume for {company} - {title}"
-        
-        github_response = self.github_client.create_or_update_file(file_path, latex, commit_message)
-        if not github_response:
-            print("   ❌ Failed to upload to GitHub")
+        # 2. Generate file paths (same base name for both .tex and .pdf)
+        tex_file_path = generate_file_path(company, title, posted_at)
+        base_name = Path(tex_file_path).stem
+        pdf_file_path = tex_file_path.replace('/tex/', '/pdf/').replace('.tex', '.pdf')
+
+        # 3. Compile LaTeX to PDF locally FIRST (before any GitHub push)
+        print("   [INFO] Compiling LaTeX to PDF locally...")
+        compile_result = compile_latex_to_pdf(latex, base_name)
+        if compile_result is None:
+            # Log compilation failure to CSV for tracking
+            failure_log = Path("compilation_failures.csv")
+            if not failure_log.exists():
+                failure_log.write_text("timestamp,company,title,tex_file\n", encoding='utf-8')
+
+            with open(failure_log, "a", encoding='utf-8') as f:
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                f.write(f"{timestamp},{company},{title},{tex_file_path}\n")
+
+            click.secho("   [ERROR] Failed to compile LaTeX to PDF - skipping GitHub push", fg="red")
             return None
-        
-        download_url = github_response.get('content', {}).get('download_url', '')
-        pdf_url = download_url.replace('/tex/', '/pdf/').replace('.tex', '.pdf')
-        print(f"   ✅ Uploaded: {file_path}")
-        
-        # 3. Wait for GitHub Actions to compile PDF
-        wait_seconds = config.WAIT_FOR_PDF_SECONDS
-        print(f"   ⏳ Checking for PDF readiness (up to {wait_seconds}s)...")
-        pdf_ready = wait_for_pdf_ready(pdf_url, wait_seconds)
-        if not pdf_ready:
-            print("   ⚠️ PDF not confirmed ready; verify GitHub Actions artifact if needed")
-        
-        # 4. Create Google Slide
-        print("   📊 Creating presentation slide...")
-        self.slides_client.create_job_slide(config.GOOGLE_SLIDES_ID, job, pdf_url)
-        
-        # 5. Find decision-maker email
-        print("   📧 Finding decision-maker email...")
+
+        pdf_path, pdf_bytes = compile_result
+        click.secho("   [OK] PDF compiled successfully", fg="green")
+
+        # 4. ATS Scoring (NEW - score resume before proceeding)
+        print("   [INFO] Scoring resume with ATS simulator...")
+        resume_text = extract_pdf_text(pdf_bytes)
+        job_desc_str = json.dumps(job, indent=2)
+        ats_scores = self.ats_scorer.score_resume(resume_text, job_desc_str)
+
+        print(f"   [INFO] ATS Score: {ats_scores['overall_score']}/100 ({ats_scores['recommendation']})")
+        print(f"   [INFO] Keyword Match: {ats_scores['keyword_match_pct']}%")
+        if ats_scores['missing_keywords']:
+            click.secho(f"   [WARN] Missing: {', '.join(ats_scores['missing_keywords'][:5])}", fg="yellow")
+
+        if not ats_scores['should_submit']:
+            click.secho(f"   [SKIP] Skipping due to low ATS score ({ats_scores['overall_score']} < 60)", fg="red")
+            return None
+
+        # Store ATS scores in job dict for later use
+        job['ats_scores'] = ats_scores
+
+        # 5. Save .tex file locally (not to GitHub)
+        local_tex_path = self.tex_dir / Path(tex_file_path).name
+        print(f"   [INFO] Saving .tex locally...")
+        try:
+            local_tex_path.write_text(latex, encoding='utf-8')
+            click.secho(f"   [OK] Saved: {local_tex_path}", fg="green")
+        except Exception as e:
+            click.secho(f"   [ERROR] Failed to save .tex locally: {e}", fg="red")
+            return None
+
+        # 5. Upload .pdf file to GitHub (needed for slide links)
+        print("   [INFO] Uploading .pdf to GitHub...")
+        pdf_response = self.github_client.upload_binary_file(
+            pdf_file_path,
+            pdf_bytes,
+            f"Add compiled PDF for {company} - {title}"
+        )
+        if pdf_response.get('message') or not pdf_response.get('content'):
+            click.secho(f"   [ERROR] Failed to upload .pdf file: {pdf_response.get('message', 'No content returned')}", fg="red")
+            return None
+        click.secho(f"   [OK] Uploaded: {pdf_file_path}", fg="green")
+
+        # PDF URL is available immediately (no waiting needed!)
+        pdf_url = f"https://raw.githubusercontent.com/{config.GITHUB_REPO}/main/{pdf_file_path}"
+        print(f"   [INFO] PDF ready: {pdf_url}")
+
+        # 6. Create Google Slide
+        print("   [INFO] Creating presentation slide...")
+        slide_created = self.slides_client.create_job_slide(config.GOOGLE_SLIDES_ID, job, pdf_url)
+        if not slide_created:
+            click.secho("   [WARN] Slide creation failed but continuing with remaining steps...", fg="yellow")
+
+        # 7. Find decision-maker email
+        print("   [INFO] Finding decision-maker email...")
         domain = job.get('companyDomain') or extract_domain(job.get('companyWebsite', ''))
         email_result = self.email_finder.find_decision_maker(domain) if domain else {}
         email = email_result.get('valid_email', '')
         person_name = email_result.get('person_full_name', '')
         person_title = email_result.get('person_job_title', '')
         person_linkedin = email_result.get('person_linkedin_url', '')
-        
+
         if email:
-            print(f"   ✅ Found: {person_name} ({email})")
+            click.secho(f"   [OK] Found: {person_name} ({email})", fg="green")
         else:
-            print("   ⚠️ No email found")
-        
-        # 6. Append to Google Sheets
-        print("   📋 Appending to tracking sheet...")
+            click.secho("   [WARN] No email found", fg="yellow")
+
+        # 9. Append to Google Sheets (with ATS metrics + email outreach fields)
+        print("   [INFO] Appending to tracking sheet...")
         row_values = {
+            # Core fields (matching spreadsheet headers)
             "Email": email,
-            "PersonName": person_name,
-            "CompanyWebsite": job.get('companyWebsite', ''),
-            "PersonTitle": person_title,
-            "PersonLinkedIn": person_linkedin,
-            "ResumePdf": pdf_url,
-            "ApplyUrl": job.get('applyUrl', ''),
+            "Name": person_name,
+            "Company Website": job.get('companyWebsite', ''),
+            "JobTitle": job.get('title', ''),
+            "JobUrl": job.get('link', ''),
+            "ResumePdfUrl": pdf_url,
+            "ApplyLink": job.get('applyUrl', ''),
             "JobID": str(job.get('id', '')),
-            "JobDescription": job.get('descriptionHtml', '')[:1000],
-            "JobKey": job_key
+            "JobDescription": job.get('descriptionHtml', ''),  # Full description, no truncation
+            # New fields for email outreach
+            "CompanyName": job.get('companyName', ''),
+            "JobLocation": job.get('location', ''),
+            "PostedAt": job.get('postedAt', ''),
+            "MatchedSkills": ', '.join(ats_scores.get('matched_keywords', [])[:10]),
+            "EmailStatus": "pending",  # For email outreach flow
+            "EmailSentAt": "",
+            "DraftedEmail": "",
+            # Follow-up tracking fields
+            "EmailCount": "0",         # Number of emails sent (0, 1, 2, or 3)
+            "LastEmailSentAt": "",     # Timestamp of most recent email
+            "NextFollowUpDate": "",    # When to send next follow-up
         }
         self.sheets_client.append_row_dict(config.GOOGLE_SHEETS_ID, row_values)
-        
+
         return {
             'job': job,
-            'resume_path': file_path,
+            'resume_path': str(local_tex_path),
             'pdf_url': pdf_url,
             'email': email,
-            'person_name': person_name
+            'person_name': person_name,
+            'ats_scores': ats_scores
         }
     
     def run(self, max_jobs: int = None) -> List[Dict]:
         """Run the entire pipeline"""
-        print("\n" + "="*60)
-        print("🚀 STARTING JOB APPLICATION PIPELINE")
-        print("="*60 + "\n")
+        click.secho("\n" + "="*60, fg="blue")
+        click.secho("STARTING JOB APPLICATION PIPELINE", fg="blue", bold=True)
+        click.secho("="*60 + "\n", fg="blue")
         
         # Initialize
         self.load_applied_jobs()
@@ -1085,13 +2474,13 @@ class JobApplicationPipeline:
                 if result:
                     results.append(result)
             except Exception as e:
-                print(f"   ❌ Error: {e}")
+                click.secho(f"   [ERROR] {e}", fg="red")
                 continue
         
         # Summary
-        print("\n" + "="*60)
-        print("📊 PIPELINE COMPLETE")
-        print("="*60)
+        click.secho("\n" + "="*60, fg="blue")
+        click.secho("PIPELINE COMPLETE", fg="blue", bold=True)
+        click.secho("="*60, fg="blue")
         print(f"   Total jobs scraped: {len(jobs)}")
         print(f"   Successfully processed: {len(results)}")
         print(f"   Failed: {len(jobs) - len(results)}")
@@ -1111,7 +2500,7 @@ if __name__ == "__main__":
     results = pipeline.run(max_jobs=10)
     
     # Print results
-    print("\n📋 Results Summary:")
+    print("\n[INFO] Results Summary:")
     for r in results:
         job = r['job']
         print(f"   - {job.get('companyName')} - {job.get('title')}")

@@ -1,0 +1,85 @@
+{
+  "manifest_version": 3,
+  "name": "Tailored Resume Autofill",
+  "version": "1.0.0",
+  "description": "Drag and drop your resume, get tailored autofill for every job application",
+  
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "identity"
+  ],
+  
+  "host_permissions": [
+    "*://boards.greenhouse.io/*",
+    "*://boards.eu.greenhouse.io/*",
+    "*://job-boards.greenhouse.io/*",
+    "*://job-boards.eu.greenhouse.io/*",
+    "*://jobs.lever.co/*",
+    "*://jobs.eu.lever.co/*",
+    "*://*.myworkdayjobs.com/*",
+    "*://*.myworkdaysite.com/*",
+    "https://your-service.com/*"
+  ],
+  
+  "action": {
+    "default_popup": "popup/index.html",
+    "default_icon": {
+      "16": "assets/icons/icon-16.png",
+      "32": "assets/icons/icon-32.png",
+      "48": "assets/icons/icon-48.png",
+      "128": "assets/icons/icon-128.png"
+    },
+    "default_title": "Tailored Resume Autofill"
+  },
+  
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  
+  "content_scripts": [
+    {
+      "matches": [
+        "*://boards.greenhouse.io/*",
+        "*://boards.eu.greenhouse.io/*",
+        "*://job-boards.greenhouse.io/*",
+        "*://job-boards.eu.greenhouse.io/*",
+        "*://jobs.lever.co/*",
+        "*://jobs.eu.lever.co/*",
+        "*://*.myworkdayjobs.com/*",
+        "*://*.myworkdaysite.com/*"
+      ],
+      "js": [
+        "lib/xpath-utils.js",
+        "config/ats-selectors.js",
+        "content/ats-detector.js",
+        "content/job-extractor.js",
+        "content/resume-tailor.js",
+        "content/form-filler.js",
+        "content/file-uploader.js",
+        "content/ui-overlay.js",
+        "content/content-script.js"
+      ],
+      "css": ["content/content-styles.css"],
+      "run_at": "document_end",
+      "all_frames": true
+    }
+  ],
+  
+  "web_accessible_resources": [
+    {
+      "resources": ["assets/*", "vendor/*", "auth/*"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  
+  "externally_connectable": {
+    "matches": ["https://your-service.com/*"]
+  }
+}
